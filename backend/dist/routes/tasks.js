@@ -1,0 +1,18 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+const express_1 = require("express");
+const taskController_1 = require("../controllers/taskController");
+const auth_1 = require("../middleware/auth");
+const router = (0, express_1.Router)();
+router.post('/', auth_1.authenticate, taskController_1.createTask);
+router.get('/', auth_1.authenticate, taskController_1.getTasks);
+router.get('/my', auth_1.authenticate, taskController_1.getMyTasks);
+router.get('/git-activity', auth_1.authenticate, taskController_1.getGitActivities);
+router.post('/git-activity', auth_1.authenticate, taskController_1.logGitActivity);
+router.get('/:id', auth_1.authenticate, taskController_1.getTask);
+router.put('/:id', auth_1.authenticate, taskController_1.updateTask);
+router.delete('/:id', auth_1.authenticate, taskController_1.deleteTask);
+router.post('/:id/assign', auth_1.authenticate, taskController_1.assignTask);
+router.post('/:id/progress', auth_1.authenticate, taskController_1.submitProgressUpdate);
+router.post('/:id/review', auth_1.authenticate, taskController_1.submitTaskReview);
+exports.default = router;
