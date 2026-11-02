@@ -71,7 +71,7 @@ class TelegramService {
       `--------------------------------\n` +
       `Please check your developer dashboard to start working!`;
 
-    return this.logAndSend(developer.id, developer.telegramId, 'task_assigned', msg);
+    return this.logAndSend(developer.id, developer.telegramChatId, 'task_assigned', msg);
   }
 
   async notifyDeadlineAlert(developer: User, task: any, project: any, hoursRemaining: number): Promise<boolean> {
@@ -86,13 +86,13 @@ class TelegramService {
       `--------------------------------\n` +
       `Please submit your progress update or mark your task as done in the system!`;
 
-    return this.logAndSend(developer.id, developer.telegramId, 'deadline_reminder', msg);
+    return this.logAndSend(developer.id, developer.telegramChatId, 'deadline_reminder', msg);
   }
 
   async notifyWorkProgress(recipient: User, developer: User, task: any, project: any, workDone: string, status: string): Promise<boolean> {
     const msg = `⚡ <b>DEVELOPER PROGRESS UPDATE</b>\n` +
       `--------------------------------\n` +
-      `<b>Developer:</b> ${developer.name} (${developer.phone || 'Phone'})\n` +
+      `<b>Developer:</b> ${developer.name} (${developer.phoneNumber || 'Phone'})\n` +
       `<b>Task:</b> ${task.title}\n` +
       `<b>Project:</b> ${project?.title || 'Project'}\n` +
       `<b>New Status:</b> <b>${status.toUpperCase()}</b>\n` +
@@ -100,7 +100,7 @@ class TelegramService {
       `--------------------------------\n` +
       `Ready for manager review!`;
 
-    return this.logAndSend(recipient.id, recipient.telegramId, 'progress_update', msg);
+    return this.logAndSend(recipient.id, recipient.telegramChatId, 'progress_update', msg);
   }
 
   async notifyReviewDecision(developer: User, reviewerName: string, task: any, decision: string, comment?: string): Promise<boolean> {
@@ -114,19 +114,19 @@ class TelegramService {
       `--------------------------------\n` +
       `Check your dashboard for full review details.`;
 
-    return this.logAndSend(developer.id, developer.telegramId, 'review_decision', msg);
+    return this.logAndSend(developer.id, developer.telegramChatId, 'review_decision', msg);
   }
 
   async sendReminder(userId: number, message: string): Promise<boolean> {
     const userRepo = AppDataSource.getRepository(User);
     const user = await userRepo.findOne({ where: { id: userId } });
-    return this.logAndSend(userId, user?.telegramId || null, 'reminder', message);
+    return this.logAndSend(userId, user?.telegramChatId || null, 'reminder', message);
   }
 
   async sendEscalation(userId: number, message: string): Promise<boolean> {
     const userRepo = AppDataSource.getRepository(User);
     const user = await userRepo.findOne({ where: { id: userId } });
-    return this.logAndSend(userId, user?.telegramId || null, 'escalation', message);
+    return this.logAndSend(userId, user?.telegramChatId || null, 'escalation', message);
   }
 
   setupWebhook(webhookUrl: string): void {

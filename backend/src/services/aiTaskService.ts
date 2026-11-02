@@ -1,11 +1,12 @@
+import OpenAI from "openai";
 import { Not } from "typeorm";
 import { AppDataSource } from "../config/data-source";
 import { Project } from "../entities/Project";
 import { Team } from "../entities/Team";
 import { Task, TaskRole, TaskStatus } from "../entities/Task";
 import { User, UserRole, UserStatus } from "../entities/User";
-import { NotificationChannel } from "../entities/Notification";
 import { NotificationService } from "./NotificationService";
+
 
 export type ProjectBrief = {
   name: string;
@@ -288,8 +289,9 @@ const flat = (lists: string[][]) => ([] as string[]).concat(...lists);
 
 export class AITaskService {
   /**
-   * Splits a project by team, then splits each team's work between ALL its developers.
-   * Every developer in a team gets a part, and each part's brief lists who does what.
+   * Main entry point: decomposes project requirements into structured tasks.
+   * If OPENAI_API_KEY is configured, uses OpenAI GPT-4o-mini for intelligent task breakdown and developer matching.
+   * Seamlessly falls back to heuristic engine if OpenAI is not configured or encounters errors.
    */
   static async processAndAssignProject(
     projectId: number,
@@ -304,6 +306,236 @@ export class AITaskService {
       repoUrl: brief?.repoUrl ?? null,
     };
 
+    const apiKey = process.env.OPENAI_API_KEY?.trim();
+    if (apiKey && apiKey.startsWith("sk-")) {
+      try {
+        console.log(`[AITaskService] Decomposing project #${projectId} using OpenAI...`);
+        const aiTasks = await this.decomposeWithOpenAI(projectId, description, orgId, info);
+        if (aiTasks && aiTasks.length > 0) {
+          console.log(`[AITaskService] Successfully decomposed project #${projectId} into ${aiTasks.length} AI-generated tasks.`);
+          return aiTasks;
+        }
+      } catch (err: any) {
+        console.warn(`[AITaskService] OpenAI API error (${err?.message || err}). Falling back to heuristic engine.`);
+      }
+    }
+
+    return this.processWithHeuristics(projectId, description, orgId, info);
+  }
+
+  /**
+   * Real AI Task Decomposition using OpenAI API
+   */
+  private static async decomposeWithOpenAI(
+    projectId: number,
+    description: string,
+    orgId: number,
+    info: ProjectBrief
+  ): Promise<Task[] | null> {
+    const apiKey = process.env.OPENAI_API_KEY?.trim();
+    if (!apiKey) return null;
+
+    const userRepo = AppDataSource.getRepository(User);
+    const taskRepo = AppDataSource.getRepository(Task);
+    const teamRepo = AppDataSource.getRepository(Team);
+
+    const allDevs = await userRepo.find({
+      where: { orgId, role: UserRole.DEVELOPER, status: UserStatus.ACTIVE },
+    });
+
+    const devProfiles = await Promise.all(
+      allDevs.map(async (d) => {
+        const activeTasks = await taskRepo.count({
+          where: { assigneeId: d.id, status: Not(TaskStatus.DONE) },
+        });
+        return {
+          id: d.id,
+          name: d.name,
+          email: d.email,
+          specialty: (d.specialty || "frontend").toLowerCase(),
+          activeTasks,
+        };
+      })
+    );
+
+    const openai = new OpenAI({ apiKey });
+
+    const systemPrompt = `You are a Principal Technical Architect & Engineering Manager in an enterprise software organization.
+Decompose project briefs into granular, enterprise-ready technical tasks for developers across disciplines (frontend, backend, ui/ux, ai).
+Distribute tasks across available developers by matching technical specialty and balancing active workload.
+Output valid JSON only.`;
+
+    const userPrompt = `Decompose this enterprise software project into discrete engineering tasks:
+
+PROJECT NAME: ${info.name}
+DESCRIPTION: ${description}
+REQUIREMENTS: ${info.requirements || "Standard enterprise requirements (clean architecture, unit tests, responsive UI, secure APIs)"}
+TARGET DEADLINE: ${info.deadline ? info.deadline.toISOString().slice(0, 10) : "Not specified"}
+REPOSITORY: ${info.repoUrl || "Enterprise repo"}
+
+ACTIVE DEVELOPERS IN ORGANIZATION:
+${JSON.stringify(devProfiles, null, 2)}
+
+TASK SPECIFICATION RULES:
+1. Break down into discrete tasks across required roles ("frontend", "backend", "ui/ux", "ai").
+2. For each task, select the optimal developer ID from the active developers based on specialty match and lower activeTasks count. If no developer fits, set suggestedAssigneeId to null.
+3. For each task, specify:
+   - "team": Name of the team (e.g. "Frontend", "Backend", "UI/UX", "AI")
+   - "role": "frontend" | "backend" | "ui/ux" | "ai"
+   - "title": Specific, actionable task title (e.g. "Implement JWT Auth & RBAC Middleware")
+   - "goal": 1-2 sentences on high-level business/technical goal
+   - "suggestedAssigneeId": Number (developer ID) or null
+   - "timelineShare": Float between 0.3 and 0.9 (fraction of project duration when this task is due; e.g. UI/UX 0.35, Backend 0.7, Frontend 0.85)
+   - "areas": Array of 1-3 work areas, each with:
+     - "title": Name of work area
+     - "steps": Array of 3-5 clear, sequential implementation steps
+     - "handIn": Array of concrete deliverables (e.g. PR link, unit tests, schema migrations)
+     - "doneWhen": Array of measurable acceptance criteria
+
+Respond with a JSON object:
+{
+  "tasks": [ ... ]
+}`;
+
+    const completion = await openai.chat.completions.create({
+      model: "gpt-4o-mini",
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userPrompt },
+      ],
+      response_format: { type: "json_object" },
+      temperature: 0.2,
+    });
+
+    const rawContent = completion.choices[0]?.message?.content;
+    if (!rawContent) return null;
+
+    const parsed = JSON.parse(rawContent);
+    const taskSpecs: any[] = parsed.tasks || parsed.items || [];
+    if (!Array.isArray(taskSpecs) || taskSpecs.length === 0) return null;
+
+    const created: Task[] = [];
+    const teamMap = new Map<string, Team>();
+
+    for (const spec of taskSpecs) {
+      const teamName = spec.team || (spec.role ? String(spec.role).toUpperCase() : "Engineering");
+      const share = typeof spec.timelineShare === "number" ? spec.timelineShare : 0.8;
+      const due = this.teamDeadline(info.deadline, share);
+
+      let team = teamMap.get(teamName);
+      if (!team) {
+        let existingTeam = await teamRepo.findOne({ where: { orgId, projectId, name: teamName } });
+        if (!existingTeam) {
+          existingTeam = await teamRepo.save(teamRepo.create({ orgId, projectId, name: teamName, deadline: due }));
+        }
+        team = existingTeam;
+        teamMap.set(teamName, team);
+      }
+
+      // Map role to TaskRole enum
+      let taskRole = TaskRole.FRONTEND;
+      const roleStr = String(spec.role || "").toLowerCase();
+      if (roleStr.includes("back")) taskRole = TaskRole.BACKEND;
+      else if (roleStr.includes("ui") || roleStr.includes("ux") || roleStr.includes("design")) taskRole = TaskRole.UI_UX;
+      else if (roleStr.includes("ai") || roleStr.includes("ml")) taskRole = TaskRole.AI;
+
+      // Assignee resolution
+      let assignedDev: User | null = null;
+      if (spec.suggestedAssigneeId) {
+        assignedDev = allDevs.find((d) => d.id === spec.suggestedAssigneeId) || null;
+      }
+      if (!assignedDev) {
+        // Fallback to least busy dev of this specialty
+        const matchingDevs = await this.developersFor(orgId, taskRole);
+        assignedDev = matchingDevs[0] || null;
+      }
+
+      const task = new Task();
+      task.projectId = projectId;
+      task.project = { id: projectId } as Project;
+      task.teamId = team.id;
+      task.team = team;
+      task.title = spec.title || `${teamName} Task`;
+      task.requiredRole = taskRole;
+      task.assigneeId = assignedDev ? assignedDev.id : null;
+      task.assignee = assignedDev ? assignedDev : null;
+      task.deadline = due;
+      task.status = assignedDev ? TaskStatus.TODO : TaskStatus.PENDING;
+      await taskRepo.save(task);
+
+      // Build structured brief
+      const briefLines: string[] = [];
+      briefLines.push("GOAL", spec.goal || "Complete technical requirements for this module.", "");
+
+      if (assignedDev) {
+        briefLines.push(`ASSIGNED DEVELOPER: ${assignedDev.name} (${assignedDev.email})`, `SPECIALTY: ${assignedDev.specialty || "Engineering"}`, "");
+      }
+
+      briefLines.push("FROM THE PM SPECIFICATION", `- ${description}`, "");
+      if (info.requirements) briefLines.push(`Extra requirements: ${info.requirements}`, "");
+
+      if (Array.isArray(spec.areas)) {
+        briefLines.push("IMPLEMENTATION BREAKDOWN");
+        spec.areas.forEach((area: any, ai: number) => {
+          briefLines.push(`Area ${ai + 1}: ${area.title || "Core Scope"}`);
+          if (Array.isArray(area.steps)) {
+            area.steps.forEach((s: string, si: number) => briefLines.push(`${si + 1}. ${s}`));
+          }
+          briefLines.push("");
+        });
+
+        const allHandIn = spec.areas.flatMap((a: any) => (Array.isArray(a.handIn) ? a.handIn : []));
+        if (allHandIn.length > 0) {
+          briefLines.push("WHAT TO HAND IN", ...allHandIn.map((h: string) => `- ${h}`), "");
+        }
+
+        const allDoneWhen = spec.areas.flatMap((a: any) => (Array.isArray(a.doneWhen) ? a.doneWhen : []));
+        if (allDoneWhen.length > 0) {
+          briefLines.push("ACCEPTANCE CRITERIA / DONE WHEN", ...allDoneWhen.map((d: string) => `- ${d}`), "");
+        }
+      }
+
+      briefLines.push(
+        "DEADLINE",
+        due
+          ? `Your milestone deadline is ${day(due)}.${info.deadline ? ` Final project delivery is ${day(info.deadline)}.` : ""}`
+          : "No strict milestone deadline set.",
+        ""
+      );
+
+      const branch = `${slug(teamName)}/task-${task.id}`;
+      briefLines.push(
+        "ENTERPRISE GIT WORKFLOW",
+        `1. Repository: ${info.repoUrl ?? "Pending repository link from PM"}`,
+        `2. Working branch: git checkout -b ${branch}`,
+        `3. Commit standard: Include "#${task.id}" in every commit message (e.g. "feat(core): implement endpoints #${task.id}")`,
+        `4. Pull Request: Open PR to main branch titled "[TASK-${task.id}] ${task.title}"`,
+        "5. Peer Review: Once tests pass and PR is opened, change task status to 'In Review' on your developer station."
+      );
+
+      const fullDescription = briefLines.join("\n");
+      await taskRepo.update(task.id, { description: fullDescription });
+      task.description = fullDescription;
+
+      created.push(task);
+      if (assignedDev) {
+        const roleCfg = ROLES.find((r) => r.role === taskRole) || ROLES[0];
+        await this.notifyAssignee(assignedDev, task, roleCfg, info, due);
+      }
+    }
+
+    return created;
+  }
+
+  /**
+   * Splits a project by team using heuristic role templates.
+   */
+  private static async processWithHeuristics(
+    projectId: number,
+    description: string,
+    orgId: number,
+    info: ProjectBrief
+  ): Promise<Task[]> {
     const taskRepo = AppDataSource.getRepository(Task);
     const teamRepo = AppDataSource.getRepository(Team);
     const created: Task[] = [];
@@ -321,20 +553,18 @@ export class AITaskService {
 
         const task = new Task();
         task.projectId = projectId;
-        task.project = { id: projectId } as Project; // fills project_id, so the project can see its tasks
+        task.project = { id: projectId } as Project;
         task.teamId = team.id;
         task.team = team;
         task.title = parts[i].title;
         task.description = "";
         task.requiredRole = cfg.role;
         task.assigneeId = developer ? developer.id : null;
-        task.assignee = developer ? developer : null; // fills assignee_id
+        task.assignee = developer ? developer : null;
         task.deadline = due;
-        // Assigned tasks start as TODO. No developer in that team yet = PENDING.
         task.status = developer ? TaskStatus.TODO : TaskStatus.PENDING;
         await taskRepo.save(task);
 
-        // The brief needs the task number (for the branch name and commit messages)
         const text = this.buildBrief({ cfg, part: parts[i], index: i, parts, people, taskId: task.id, info, description, due });
         await taskRepo.update(task.id, { description: text });
         task.description = text;
@@ -346,6 +576,7 @@ export class AITaskService {
 
     return created;
   }
+
 
   // Teams named in the text. If none is recognised, give the project a frontend and a backend team.
   private static pickRoles(text: string): RoleConfig[] {
@@ -487,16 +718,15 @@ export class AITaskService {
   }
 
   private static async notifyAssignee(dev: User, task: Task, cfg: RoleConfig, info: ProjectBrief, due: Date | null): Promise<void> {
-    if (!dev.telegramChatId) return; // not linked yet
     try {
       const text =
-        `New task for you: ${task.title} (task #${task.id})\n` +
+        `New task for you: ${task.title} (TASK-${task.id})\n` +
         `Project: ${info.name}\n` +
         `Due: ${due ? day(due) : "no deadline set yet"}\n` +
         `Repository: ${info.repoUrl ?? "ask your PM"}\n` +
         `Your branch: ${slug(cfg.team)}/task-${task.id}\n\n` +
-        `Open your dashboard for the full step-by-step plan and to see who does what. Put #${task.id} in every commit message and pull request title.`;
-      await NotificationService.send(dev.id, NotificationChannel.TELEGRAM, dev.telegramChatId, text);
+        `Open your dashboard for the full step-by-step plan. Put TASK-${task.id} in every commit message and pull request title.`;
+      await NotificationService.notifyUser(dev, text, "TASK_ASSIGNED");
     } catch (err: any) {
       console.error("Could not notify assignee:", err?.message || err);
     }

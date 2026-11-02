@@ -9,19 +9,12 @@ var __metadata = (this && this.__metadata) || function (k, v) {
     if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.Team = exports.TeamType = void 0;
+exports.Team = void 0;
 const typeorm_1 = require("typeorm");
+const Organization_1 = require("./Organization");
 const Project_1 = require("./Project");
-const User_1 = require("./User");
 const TeamMember_1 = require("./TeamMember");
 const Task_1 = require("./Task");
-var TeamType;
-(function (TeamType) {
-    TeamType["FRONTEND"] = "frontend";
-    TeamType["BACKEND"] = "backend";
-    TeamType["UI_UX"] = "ui_ux";
-    TeamType["AI"] = "ai";
-})(TeamType || (exports.TeamType = TeamType = {}));
 let Team = class Team {
 };
 exports.Team = Team;
@@ -30,36 +23,29 @@ __decorate([
     __metadata("design:type", Number)
 ], Team.prototype, "id", void 0);
 __decorate([
-    (0, typeorm_1.Column)({ type: 'int' }),
+    (0, typeorm_1.Column)(),
+    __metadata("design:type", Number)
+], Team.prototype, "orgId", void 0);
+__decorate([
+    (0, typeorm_1.ManyToOne)(() => Organization_1.Organization, (org) => org.teams, { onDelete: "CASCADE" }),
+    (0, typeorm_1.JoinColumn)({ name: "org_id" }),
+    __metadata("design:type", Organization_1.Organization)
+], Team.prototype, "organization", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: "int" }),
     __metadata("design:type", Number)
 ], Team.prototype, "projectId", void 0);
 __decorate([
-    (0, typeorm_1.ManyToOne)(() => Project_1.Project, project => project.teams),
-    (0, typeorm_1.JoinColumn)({ name: 'project_id' }),
+    (0, typeorm_1.ManyToOne)(() => Project_1.Project, (project) => project.teams, { onDelete: "CASCADE" }),
+    (0, typeorm_1.JoinColumn)({ name: "project_id" }),
     __metadata("design:type", Project_1.Project)
 ], Team.prototype, "project", void 0);
 __decorate([
-    (0, typeorm_1.Column)({ type: 'varchar', length: 100 }),
+    (0, typeorm_1.Column)(),
     __metadata("design:type", String)
 ], Team.prototype, "name", void 0);
 __decorate([
-    (0, typeorm_1.Column)({
-        type: 'varchar', length: 50,
-        enum: TeamType
-    }),
-    __metadata("design:type", String)
-], Team.prototype, "type", void 0);
-__decorate([
-    (0, typeorm_1.Column)({ type: 'int', nullable: true }),
-    __metadata("design:type", Number)
-], Team.prototype, "leadId", void 0);
-__decorate([
-    (0, typeorm_1.ManyToOne)(() => User_1.User, user => user.ledTeams),
-    (0, typeorm_1.JoinColumn)({ name: 'lead_id' }),
-    __metadata("design:type", User_1.User)
-], Team.prototype, "lead", void 0);
-__decorate([
-    (0, typeorm_1.Column)({ type: 'date', nullable: true }),
+    (0, typeorm_1.Column)({ type: "timestamp", nullable: true }),
     __metadata("design:type", Object)
 ], Team.prototype, "deadline", void 0);
 __decorate([
@@ -71,13 +57,13 @@ __decorate([
     __metadata("design:type", Date)
 ], Team.prototype, "updatedAt", void 0);
 __decorate([
-    (0, typeorm_1.OneToMany)(() => TeamMember_1.TeamMember, teamMember => teamMember.team),
+    (0, typeorm_1.OneToMany)(() => TeamMember_1.TeamMember, (tm) => tm.team, { cascade: true }),
     __metadata("design:type", Array)
-], Team.prototype, "members", void 0);
+], Team.prototype, "teamMembers", void 0);
 __decorate([
-    (0, typeorm_1.OneToMany)(() => Task_1.Task, task => task.team),
+    (0, typeorm_1.OneToMany)(() => Task_1.Task, (task) => task.team),
     __metadata("design:type", Array)
 ], Team.prototype, "tasks", void 0);
 exports.Team = Team = __decorate([
-    (0, typeorm_1.Entity)('team')
+    (0, typeorm_1.Entity)("teams")
 ], Team);

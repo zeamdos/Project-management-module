@@ -10,8 +10,9 @@ var __metadata = (this && this.__metadata) || function (k, v) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.Policy = void 0;
+// src/entities/Policy.ts
 const typeorm_1 = require("typeorm");
-const Organization_1 = require("./Organization");
+const Project_1 = require("./Project");
 let Policy = class Policy {
 };
 exports.Policy = Policy;
@@ -20,38 +21,22 @@ __decorate([
     __metadata("design:type", Number)
 ], Policy.prototype, "id", void 0);
 __decorate([
-    (0, typeorm_1.Column)({ type: 'int' }),
+    (0, typeorm_1.Column)({ type: "int" }),
     __metadata("design:type", Number)
-], Policy.prototype, "orgId", void 0);
+], Policy.prototype, "projectId", void 0);
 __decorate([
-    (0, typeorm_1.ManyToOne)(() => Organization_1.Organization, organization => organization.policies),
-    (0, typeorm_1.JoinColumn)({ name: 'org_id' }),
-    __metadata("design:type", Organization_1.Organization)
-], Policy.prototype, "organization", void 0);
+    (0, typeorm_1.ManyToOne)(() => Project_1.Project, (p) => p.policies, { onDelete: "CASCADE" }),
+    (0, typeorm_1.JoinColumn)({ name: "project_id" }),
+    __metadata("design:type", Project_1.Project)
+], Policy.prototype, "project", void 0);
 __decorate([
-    (0, typeorm_1.Column)({ type: 'varchar', length: 100 }),
+    (0, typeorm_1.Column)({ type: "varchar" }),
     __metadata("design:type", String)
-], Policy.prototype, "name", void 0);
+], Policy.prototype, "key", void 0);
 __decorate([
-    (0, typeorm_1.Column)({ type: 'text', nullable: true }),
-    __metadata("design:type", String)
-], Policy.prototype, "description", void 0);
-__decorate([
-    (0, typeorm_1.Column)({ type: 'simple-json' }),
-    __metadata("design:type", Object)
-], Policy.prototype, "config", void 0);
-__decorate([
-    (0, typeorm_1.Column)({ type: 'boolean', default: true }),
+    (0, typeorm_1.Column)({ type: "boolean", default: true }),
     __metadata("design:type", Boolean)
-], Policy.prototype, "isActive", void 0);
-__decorate([
-    (0, typeorm_1.CreateDateColumn)(),
-    __metadata("design:type", Date)
-], Policy.prototype, "createdAt", void 0);
-__decorate([
-    (0, typeorm_1.UpdateDateColumn)(),
-    __metadata("design:type", Date)
-], Policy.prototype, "updatedAt", void 0);
+], Policy.prototype, "enabled", void 0);
 exports.Policy = Policy = __decorate([
-    (0, typeorm_1.Entity)('policy')
+    (0, typeorm_1.Entity)("policies")
 ], Policy);

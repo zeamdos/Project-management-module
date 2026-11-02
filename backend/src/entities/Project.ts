@@ -6,6 +6,14 @@ import { Milestone } from "./Milestone";
 import { Repository } from "./Repository";
 import { Policy } from "./Policy";
 
+export enum ProjectStatus {
+  DRAFT = "DRAFT",
+  ACTIVE = "ACTIVE",
+  ON_HOLD = "ON_HOLD",
+  ARCHIVED = "ARCHIVED",
+  COMPLETED = "COMPLETED",
+}
+
 @Entity("projects")
 export class Project {
   @PrimaryGeneratedColumn()
@@ -23,6 +31,19 @@ export class Project {
 
   @Column({ type: "text" })
   description!: string;
+
+  @Column({
+    type: "enum",
+    enum: ProjectStatus,
+    default: ProjectStatus.ACTIVE,
+  })
+  status!: ProjectStatus;
+
+  @Column({ type: "varchar", nullable: true })
+  techStack!: string | null;
+
+  @Column({ type: "text", nullable: true })
+  statusReason!: string | null;
 
   @Column({ default: 7 })
   updateIntervalDays!: number; // 3 or 7 days

@@ -13,9 +13,8 @@ exports.Organization = void 0;
 const typeorm_1 = require("typeorm");
 const User_1 = require("./User");
 const Project_1 = require("./Project");
-const EscalationRule_1 = require("./EscalationRule");
-const Policy_1 = require("./Policy");
-const AuditLog_1 = require("./AuditLog");
+const Team_1 = require("./Team");
+const Skill_1 = require("./Skill");
 let Organization = class Organization {
 };
 exports.Organization = Organization;
@@ -24,21 +23,9 @@ __decorate([
     __metadata("design:type", Number)
 ], Organization.prototype, "id", void 0);
 __decorate([
-    (0, typeorm_1.Column)({ type: 'varchar', length: 255 }),
+    (0, typeorm_1.Column)({ type: "varchar", unique: true }),
     __metadata("design:type", String)
 ], Organization.prototype, "name", void 0);
-__decorate([
-    (0, typeorm_1.Column)({ type: 'simple-json', nullable: true }),
-    __metadata("design:type", Object)
-], Organization.prototype, "settings", void 0);
-__decorate([
-    (0, typeorm_1.Column)({ type: 'varchar', length: 50, nullable: true }),
-    __metadata("design:type", String)
-], Organization.prototype, "plan", void 0);
-__decorate([
-    (0, typeorm_1.Column)({ type: 'varchar', length: 10, default: 'en' }),
-    __metadata("design:type", String)
-], Organization.prototype, "defaultLanguage", void 0);
 __decorate([
     (0, typeorm_1.CreateDateColumn)(),
     __metadata("design:type", Date)
@@ -48,25 +35,21 @@ __decorate([
     __metadata("design:type", Date)
 ], Organization.prototype, "updatedAt", void 0);
 __decorate([
-    (0, typeorm_1.OneToMany)(() => User_1.User, user => user.organization),
+    (0, typeorm_1.OneToMany)(() => User_1.User, (user) => user.organization),
     __metadata("design:type", Array)
 ], Organization.prototype, "users", void 0);
 __decorate([
-    (0, typeorm_1.OneToMany)(() => Project_1.Project, project => project.organization),
+    (0, typeorm_1.OneToMany)(() => Project_1.Project, (project) => project.organization),
     __metadata("design:type", Array)
 ], Organization.prototype, "projects", void 0);
 __decorate([
-    (0, typeorm_1.OneToMany)(() => EscalationRule_1.EscalationRule, rule => rule.organization),
+    (0, typeorm_1.OneToMany)(() => Team_1.Team, (team) => team.organization),
     __metadata("design:type", Array)
-], Organization.prototype, "escalationRules", void 0);
+], Organization.prototype, "teams", void 0);
 __decorate([
-    (0, typeorm_1.OneToMany)(() => Policy_1.Policy, policy => policy.organization),
+    (0, typeorm_1.OneToMany)(() => Skill_1.Skill, (skill) => skill.organization),
     __metadata("design:type", Array)
-], Organization.prototype, "policies", void 0);
-__decorate([
-    (0, typeorm_1.OneToMany)(() => AuditLog_1.AuditLog, auditLog => auditLog.organization),
-    __metadata("design:type", Array)
-], Organization.prototype, "auditLogs", void 0);
+], Organization.prototype, "skills", void 0);
 exports.Organization = Organization = __decorate([
-    (0, typeorm_1.Entity)('organization')
+    (0, typeorm_1.Entity)("organizations")
 ], Organization);

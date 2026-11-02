@@ -143,7 +143,7 @@ export default function AuthPage({ onLoginSuccess }: { onLoginSuccess: () => voi
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               placeholder="alex@acme.com"
-              className="w-full bg-black/50 border border-gray-700 rounded-xl px-4 py-3 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-white transition-colors"
+              className="w-full bg-slate-950/50 border border-slate-800 rounded-xl px-4 py-3 text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:border-indigo-500 transition-colors"
             />
           </div>
 
@@ -155,7 +155,7 @@ export default function AuthPage({ onLoginSuccess }: { onLoginSuccess: () => voi
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               placeholder="••••••••••••"
-              className="w-full bg-black/50 border border-gray-700 rounded-xl px-4 py-3 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-white transition-colors"
+              className="w-full bg-slate-950/50 border border-slate-800 rounded-xl px-4 py-3 text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:border-indigo-500 transition-colors"
             />
           </div>
 

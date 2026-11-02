@@ -11,20 +11,18 @@ var __metadata = (this && this.__metadata) || function (k, v) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.Notification = exports.NotificationStatus = exports.NotificationChannel = void 0;
 const typeorm_1 = require("typeorm");
-const User_1 = require("./User");
 var NotificationChannel;
 (function (NotificationChannel) {
-    NotificationChannel["TELEGRAM"] = "telegram";
-    NotificationChannel["SMS"] = "sms";
-    NotificationChannel["EMAIL"] = "email";
-    NotificationChannel["IN_APP"] = "in_app";
+    NotificationChannel["TELEGRAM"] = "TELEGRAM";
+    NotificationChannel["SMS"] = "SMS";
+    NotificationChannel["EMAIL"] = "EMAIL";
+    NotificationChannel["IN_APP"] = "IN_APP";
 })(NotificationChannel || (exports.NotificationChannel = NotificationChannel = {}));
 var NotificationStatus;
 (function (NotificationStatus) {
-    NotificationStatus["PENDING"] = "pending";
-    NotificationStatus["SENT"] = "sent";
-    NotificationStatus["DELIVERED"] = "delivered";
-    NotificationStatus["FAILED"] = "failed";
+    NotificationStatus["PENDING"] = "PENDING";
+    NotificationStatus["SENT"] = "SENT";
+    NotificationStatus["FAILED"] = "FAILED";
 })(NotificationStatus || (exports.NotificationStatus = NotificationStatus = {}));
 let Notification = class Notification {
 };
@@ -34,61 +32,48 @@ __decorate([
     __metadata("design:type", Number)
 ], Notification.prototype, "id", void 0);
 __decorate([
-    (0, typeorm_1.Column)({ type: 'int' }),
+    (0, typeorm_1.Column)({ type: "int" }),
     __metadata("design:type", Number)
 ], Notification.prototype, "userId", void 0);
 __decorate([
-    (0, typeorm_1.ManyToOne)(() => User_1.User, user => user.notifications),
-    (0, typeorm_1.JoinColumn)({ name: 'user_id' }),
-    __metadata("design:type", User_1.User)
-], Notification.prototype, "user", void 0);
-__decorate([
-    (0, typeorm_1.Column)({ type: 'varchar', length: 50 }),
-    __metadata("design:type", String)
-], Notification.prototype, "type", void 0);
-__decorate([
     (0, typeorm_1.Column)({
-        type: 'varchar', length: 50,
-        enum: NotificationChannel
+        type: "enum",
+        enum: NotificationChannel,
     }),
     __metadata("design:type", String)
 ], Notification.prototype, "channel", void 0);
 __decorate([
-    (0, typeorm_1.Column)({ type: 'varchar', length: 100, nullable: true }),
-    __metadata("design:type", Object)
-], Notification.prototype, "template", void 0);
+    (0, typeorm_1.Column)({ type: "varchar", default: "GENERAL" }),
+    __metadata("design:type", String)
+], Notification.prototype, "kind", void 0);
 __decorate([
-    (0, typeorm_1.Column)({ type: 'text', nullable: true }),
-    __metadata("design:type", Object)
-], Notification.prototype, "content", void 0);
+    (0, typeorm_1.Column)({ type: "text" }),
+    __metadata("design:type", String)
+], Notification.prototype, "message", void 0);
 __decorate([
     (0, typeorm_1.Column)({
-        type: 'varchar', length: 50,
+        type: "enum",
         enum: NotificationStatus,
-        default: NotificationStatus.PENDING
+        default: NotificationStatus.PENDING,
     }),
     __metadata("design:type", String)
 ], Notification.prototype, "status", void 0);
 __decorate([
-    (0, typeorm_1.Column)({ type: 'int', default: 0 }),
+    (0, typeorm_1.Column)({ type: "int", default: 0 }),
     __metadata("design:type", Number)
 ], Notification.prototype, "attempts", void 0);
 __decorate([
-    (0, typeorm_1.Column)({ type: 'datetime', nullable: true }),
-    __metadata("design:type", Object)
-], Notification.prototype, "sentAt", void 0);
-__decorate([
-    (0, typeorm_1.Column)({ type: 'datetime', nullable: true }),
-    __metadata("design:type", Object)
-], Notification.prototype, "deliveredAt", void 0);
-__decorate([
-    (0, typeorm_1.Column)({ type: 'text', nullable: true }),
+    (0, typeorm_1.Column)({ type: "text", nullable: true }),
     __metadata("design:type", Object)
 ], Notification.prototype, "errorMessage", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: "timestamp", nullable: true }),
+    __metadata("design:type", Object)
+], Notification.prototype, "readAt", void 0);
 __decorate([
     (0, typeorm_1.CreateDateColumn)(),
     __metadata("design:type", Date)
 ], Notification.prototype, "createdAt", void 0);
 exports.Notification = Notification = __decorate([
-    (0, typeorm_1.Entity)('notification')
+    (0, typeorm_1.Entity)("notifications")
 ], Notification);

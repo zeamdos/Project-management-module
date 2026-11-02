@@ -70,6 +70,27 @@ export class User {
   @Column({ type: "varchar", nullable: true })
   phoneNumber!: string | null;
 
+  @Column({ type: "boolean", default: true })
+  notifyInApp!: boolean;
+
+  @Column({ type: "boolean", default: true })
+  notifyTelegram!: boolean;
+
+  @Column({ type: "boolean", default: true })
+  notifyEmail!: boolean;
+
+  @Column({ type: "varchar", nullable: true })
+  quietHoursStart!: string | null;
+
+  @Column({ type: "varchar", nullable: true })
+  quietHoursEnd!: string | null;
+
+  @Column({ type: "int", default: 0 })
+  failedLoginAttempts!: number;
+
+  @Column({ type: "timestamp", nullable: true })
+  lockedUntil!: Date | null;
+
   @CreateDateColumn()
   createdAt!: Date;
 

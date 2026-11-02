@@ -1,11 +1,11 @@
 import { Response } from "express";
-import { In } from "typeorm";
+import { In, IsNull } from "typeorm";
 import { AppDataSource } from "../config/data-source";
 import { AuthRequest } from "../middleware/auth";
 import { User, UserRole } from "../entities/User";
 import { Task, TaskStatus } from "../entities/Task";
 import { GitActivity } from "../entities/GitActivity";
-import { NotificationChannel } from "../entities/Notification";
+import { Notification, NotificationChannel } from "../entities/Notification";
 import { NotificationService } from "../services/NotificationService";
 import { AuditService } from "../services/AuditService";
 import { createLinkCode } from "../services/telegramBot";
@@ -33,7 +33,13 @@ export class DeveloperController {
         orgId: user.orgId,
         specialty: user.specialty,
         githubUsername: user.githubUsername,
+        phoneNumber: user.phoneNumber,
         telegramLinked: !!user.telegramChatId,
+        notifyInApp: user.notifyInApp !== false,
+        notifyTelegram: user.notifyTelegram !== false,
+        notifyEmail: user.notifyEmail !== false,
+        quietHoursStart: user.quietHoursStart,
+        quietHoursEnd: user.quietHoursEnd,
       });
     } catch (error: any) {
       console.error("me error:", error);
@@ -46,7 +52,7 @@ export class DeveloperController {
     try {
       const rows = await AppDataSource.getRepository(Task).find({
         where: { assigneeId: req.user!.id },
-        relations: ["project", "project.repositories"],
+        relations: ["project", "project.repositories", "reviews", "reviews.reviewer"],
         order: { id: "DESC" },
       });
 
@@ -94,6 +100,10 @@ export class DeveloperController {
           projectId: t.projectId,
           projectName: t.project?.name ?? null,
           repoUrl: t.project?.repositories?.[0]?.url ?? null,
+          lastReview: (() => {
+            const r = (t.reviews || []).slice().sort((a, b) => b.id - a.id)[0];
+            return r ? { decision: r.status, comments: r.comments, reviewer: r.reviewer?.name ?? null, at: r.createdAt } : null;
+          })(),
         })),
       });
     } catch (error: any) {
@@ -123,6 +133,139 @@ export class DeveloperController {
       });
     } catch (error: any) {
       console.error("commits error:", error);
+      res.status(500).json({ error: error.message });
+    }
+  }
+
+  static async updateProfile(req: AuthRequest, res: Response): Promise<void> {
+    try {
+      const userRepo = AppDataSource.getRepository(User);
+      const user = await userRepo.findOne({ where: { id: req.user!.id } });
+      if (!user) {
+        res.status(404).json({ error: "User not found" });
+        return;
+      }
+
+      const { name, phoneNumber, githubUsername, notifyInApp, notifyTelegram, notifyEmail, quietHoursStart, quietHoursEnd } = req.body;
+
+      if (name !== undefined) {
+        const trimmed = String(name).trim();
+        if (!trimmed) {
+          res.status(400).json({ error: "Name cannot be empty." });
+          return;
+        }
+        user.name = trimmed;
+      }
+      if (phoneNumber !== undefined) {
+        const phone = String(phoneNumber).trim();
+        if (phone && !/^\+[1-9]\d{7,14}$/.test(phone)) {
+          res.status(400).json({ error: "Phone must be in E.164 format, for example +251911000000." });
+          return;
+        }
+        user.phoneNumber = phone || null;
+      }
+      if (githubUsername !== undefined) {
+        const raw = String(githubUsername).trim().replace(/^@/, "");
+        const match = raw.match(/github\.com\/([^/?#\s]+)/i);
+        user.githubUsername = (match ? match[1] : raw) || null;
+      }
+      if (notifyInApp !== undefined) user.notifyInApp = Boolean(notifyInApp);
+      if (notifyTelegram !== undefined) user.notifyTelegram = Boolean(notifyTelegram);
+      if (notifyEmail !== undefined) user.notifyEmail = Boolean(notifyEmail);
+
+      const hhmm = (v: unknown) => {
+        const s = String(v || "").trim();
+        if (!s) return null;
+        return /^\d{2}:\d{2}$/.test(s) ? s : "__invalid__";
+      };
+      if (quietHoursStart !== undefined) {
+        const v = hhmm(quietHoursStart);
+        if (v === "__invalid__") {
+          res.status(400).json({ error: "Quiet hours must look like 20:00." });
+          return;
+        }
+        user.quietHoursStart = v;
+      }
+      if (quietHoursEnd !== undefined) {
+        const v = hhmm(quietHoursEnd);
+        if (v === "__invalid__") {
+          res.status(400).json({ error: "Quiet hours must look like 08:00." });
+          return;
+        }
+        user.quietHoursEnd = v;
+      }
+
+      await userRepo.save(user);
+      res.json({
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        orgId: user.orgId,
+        specialty: user.specialty,
+        githubUsername: user.githubUsername,
+        phoneNumber: user.phoneNumber,
+        telegramLinked: !!user.telegramChatId,
+        notifyInApp: user.notifyInApp !== false,
+        notifyTelegram: user.notifyTelegram !== false,
+        notifyEmail: user.notifyEmail !== false,
+        quietHoursStart: user.quietHoursStart,
+        quietHoursEnd: user.quietHoursEnd,
+      });
+    } catch (error: any) {
+      console.error("updateProfile error:", error);
+      res.status(500).json({ error: error.message });
+    }
+  }
+
+  static async notifications(req: AuthRequest, res: Response): Promise<void> {
+    try {
+      const rows = await AppDataSource.getRepository(Notification).find({
+        where: { userId: req.user!.id, channel: NotificationChannel.IN_APP },
+        order: { id: "DESC" },
+        take: 50,
+      });
+      res.json({
+        unread: rows.filter((n) => !n.readAt).length,
+        notifications: rows.map((n) => ({
+          id: n.id,
+          kind: n.kind,
+          message: n.message,
+          readAt: n.readAt,
+          createdAt: n.createdAt,
+        })),
+      });
+    } catch (error: any) {
+      console.error("notifications error:", error);
+      res.status(500).json({ error: error.message });
+    }
+  }
+
+  static async readNotification(req: AuthRequest, res: Response): Promise<void> {
+    try {
+      const id = Number(req.params.id);
+      const repo = AppDataSource.getRepository(Notification);
+      const row = await repo.findOne({ where: { id, userId: req.user!.id, channel: NotificationChannel.IN_APP } });
+      if (!row) {
+        res.status(404).json({ error: "Notification not found" });
+        return;
+      }
+      row.readAt = new Date();
+      await repo.save(row);
+      res.json({ message: "Read" });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  }
+
+  static async readAllNotifications(req: AuthRequest, res: Response): Promise<void> {
+    try {
+      await AppDataSource.getRepository(Notification).update(
+        { userId: req.user!.id, channel: NotificationChannel.IN_APP, readAt: IsNull() },
+        { readAt: new Date() }
+      );
+      res.json({ message: "All read" });
+    } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
   }
@@ -175,24 +318,19 @@ export class DeveloperController {
       }
 
       const text =
-        `${dev.name}${dev.specialty ? ` (${dev.specialty})` : ""} updated "${task.title}"` +
+        `${dev.name}${dev.specialty ? ` (${dev.specialty})` : ""} updated "${task.title}" (TASK-${task.id})` +
         `${task.project?.name ? ` in ${task.project.name}` : ""}\n` +
         `Status: ${pretty(oldStatus)} -> ${pretty(newStatus)}` +
         (note && note.trim() ? `\nNote: ${note.trim()}` : "");
 
-      // Tell the PM / admin / team leads, plus everyone in the same team
       const leadRoles = [UserRole.ADMIN, UserRole.MANAGER, UserRole.TEAM_LEAD];
       const people = await userRepo.find({ where: { orgId: dev.orgId } });
       const recipients = people.filter(
-        (p) =>
-          p.id !== dev.id &&
-          !!p.telegramChatId &&
-          (leadRoles.includes(p.role) || (!!dev.specialty && p.specialty === dev.specialty))
+        (p) => p.id !== dev.id && (leadRoles.includes(p.role) || (!!dev.specialty && p.specialty === dev.specialty))
       );
 
-      await Promise.allSettled(
-        recipients.map((r) => NotificationService.send(r.id, NotificationChannel.TELEGRAM, r.telegramChatId!, text))
-      );
+      const kind = newStatus === TaskStatus.IN_REVIEW ? "REVIEW_PENDING" : newStatus === TaskStatus.BLOCKED ? "BLOCKER" : "PROGRESS";
+      await Promise.allSettled(recipients.map((r) => NotificationService.notifyUser(r, text, kind, kind === "BLOCKER")));
 
       await AuditService.log(dev.orgId, dev.id, "TASK_UPDATE", "Task", taskId, text);
 

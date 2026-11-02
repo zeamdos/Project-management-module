@@ -10,10 +10,10 @@ var __metadata = (this && this.__metadata) || function (k, v) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.TaskRequiredSkill = void 0;
+// src/entities/TaskRequiredSkill.ts
 const typeorm_1 = require("typeorm");
 const Task_1 = require("./Task");
 const Skill_1 = require("./Skill");
-const UserSkill_1 = require("./UserSkill");
 let TaskRequiredSkill = class TaskRequiredSkill {
 };
 exports.TaskRequiredSkill = TaskRequiredSkill;
@@ -22,30 +22,24 @@ __decorate([
     __metadata("design:type", Number)
 ], TaskRequiredSkill.prototype, "id", void 0);
 __decorate([
-    (0, typeorm_1.Column)({ type: 'int' }),
+    (0, typeorm_1.Column)(),
     __metadata("design:type", Number)
 ], TaskRequiredSkill.prototype, "taskId", void 0);
 __decorate([
-    (0, typeorm_1.ManyToOne)(() => Task_1.Task, task => task.requiredSkills),
-    (0, typeorm_1.JoinColumn)({ name: 'task_id' }),
+    (0, typeorm_1.ManyToOne)(() => Task_1.Task, (task) => task.requiredSkills, { onDelete: "CASCADE" }),
+    (0, typeorm_1.JoinColumn)({ name: "task_id" }),
     __metadata("design:type", Task_1.Task)
 ], TaskRequiredSkill.prototype, "task", void 0);
 __decorate([
-    (0, typeorm_1.Column)({ type: 'int' }),
+    (0, typeorm_1.Column)(),
     __metadata("design:type", Number)
 ], TaskRequiredSkill.prototype, "skillId", void 0);
 __decorate([
-    (0, typeorm_1.ManyToOne)(() => Skill_1.Skill, skill => skill.taskRequiredSkills),
-    (0, typeorm_1.JoinColumn)({ name: 'skill_id' }),
+    (0, typeorm_1.ManyToOne)(() => Skill_1.Skill, (skill) => skill.taskRequiredSkills, { onDelete: "CASCADE" }),
+    (0, typeorm_1.JoinColumn)({ name: "skill_id" }),
     __metadata("design:type", Skill_1.Skill)
 ], TaskRequiredSkill.prototype, "skill", void 0);
-__decorate([
-    (0, typeorm_1.Column)({
-        type: 'varchar', length: 50,
-        enum: UserSkill_1.Proficiency
-    }),
-    __metadata("design:type", String)
-], TaskRequiredSkill.prototype, "minimumProficiency", void 0);
 exports.TaskRequiredSkill = TaskRequiredSkill = __decorate([
-    (0, typeorm_1.Entity)('task_required_skill')
+    (0, typeorm_1.Entity)("task_required_skills"),
+    (0, typeorm_1.Unique)(["taskId", "skillId"])
 ], TaskRequiredSkill);

@@ -1,13 +1,11 @@
-import { Router } from 'express';
-import { register, login, getProfile, updateProfile, getDevelopers } from '../controllers/authController';
-import { authenticate } from '../middleware/auth';
+import { Router } from "express";
+import { AuthController } from "../controllers/authController";
 
+// Note: index.ts already registers these routes directly (with a rate limit),
+// so this router is not used unless you mount it yourself. Do not do both.
 const router = Router();
 
-router.post('/register', register);
-router.post('/login', login);
-router.get('/profile', authenticate, getProfile);
-router.put('/profile', authenticate, updateProfile);
-router.get('/developers', authenticate, getDevelopers);
+router.post("/register", AuthController.register);
+router.post("/login", AuthController.login);
 
 export default router;

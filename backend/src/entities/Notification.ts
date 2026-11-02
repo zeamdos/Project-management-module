@@ -1,10 +1,10 @@
-// src/entities/Notification.ts
 import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn } from "typeorm";
 
 export enum NotificationChannel {
   TELEGRAM = "TELEGRAM",
   SMS = "SMS",
   EMAIL = "EMAIL",
+  IN_APP = "IN_APP",
 }
 
 export enum NotificationStatus {
@@ -27,6 +27,9 @@ export class Notification {
   })
   channel!: NotificationChannel;
 
+  @Column({ type: "varchar", default: "GENERAL" })
+  kind!: string;
+
   @Column({ type: "text" })
   message!: string;
 
@@ -43,10 +46,13 @@ export class Notification {
   @Column({ type: "text", nullable: true })
   errorMessage!: string | null;
 
+  @Column({ type: "timestamp", nullable: true })
+  readAt!: Date | null;
+
   @CreateDateColumn()
   createdAt!: Date;
+  type: any;
   user: any;
   content: string;
-  type: any;
   sentAt: Date;
 }

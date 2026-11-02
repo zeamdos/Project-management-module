@@ -1,24 +1,16 @@
-import { Router } from 'express';
-import {
-  createProject,
-  getProjects,
-  getProject,
-  updateProject,
-  deleteProject,
-  getProjectStats,
-  checkProjectDeadlines,
-} from '../controllers/projectController';
-import { authenticate } from '../middleware/auth';
+import { Router } from "express";
+import { ProjectController } from "../controllers/projectController";
+import { authenticate, requireRole } from "../middleware/auth";
+import { UserRole } from "../entities/User";
 
+// Note: index.ts already registers these routes directly, so this router is not used unless
+// you mount it yourself (app.use("/api/projects", router)). Do not do both.
 const router = Router();
 
-router.post('/', authenticate, createProject);
-router.get('/', authenticate, getProjects);
-router.post('/check-deadlines', authenticate, checkProjectDeadlines);
-router.get('/:id', authenticate, getProject);
-router.post('/:id/check-deadlines', authenticate, checkProjectDeadlines);
-router.put('/:id', authenticate, updateProject);
-router.delete('/:id', authenticate, deleteProject);
-router.get('/:id/stats', authenticate, getProjectStats);
+router.post("/", authenticate, requireRole(UserRole.ADMIN, UserRole.MANAGER), ProjectController.create);
+router.get("/", authenticate, ProjectController.list);
+router.get("/:id", authenticate, ProjectController.getById);
+router.put("/:id", authenticate, requireRole(UserRole.ADMIN, UserRole.MANAGER), ProjectController.update);
+router.delete("/:id", authenticate, requireRole(UserRole.ADMIN, UserRole.MANAGER), ProjectController.delete);
 
 export default router;

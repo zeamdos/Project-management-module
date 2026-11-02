@@ -10,6 +10,7 @@ var __metadata = (this && this.__metadata) || function (k, v) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.TaskDependency = void 0;
+// src/entities/TaskDependency.ts
 const typeorm_1 = require("typeorm");
 const Task_1 = require("./Task");
 let TaskDependency = class TaskDependency {
@@ -20,27 +21,24 @@ __decorate([
     __metadata("design:type", Number)
 ], TaskDependency.prototype, "id", void 0);
 __decorate([
-    (0, typeorm_1.Column)({ type: 'int' }),
+    (0, typeorm_1.Column)(),
     __metadata("design:type", Number)
 ], TaskDependency.prototype, "taskId", void 0);
 __decorate([
-    (0, typeorm_1.ManyToOne)(() => Task_1.Task, task => task.dependencies),
-    (0, typeorm_1.JoinColumn)({ name: 'task_id' }),
+    (0, typeorm_1.ManyToOne)(() => Task_1.Task, (task) => task.dependencies, { onDelete: "CASCADE" }),
+    (0, typeorm_1.JoinColumn)({ name: "task_id" }),
     __metadata("design:type", Task_1.Task)
 ], TaskDependency.prototype, "task", void 0);
 __decorate([
-    (0, typeorm_1.Column)({ type: 'int' }),
+    (0, typeorm_1.Column)(),
     __metadata("design:type", Number)
 ], TaskDependency.prototype, "dependsOnTaskId", void 0);
 __decorate([
-    (0, typeorm_1.ManyToOne)(() => Task_1.Task, task => task.dependentTasks),
-    (0, typeorm_1.JoinColumn)({ name: 'depends_on_task_id' }),
+    (0, typeorm_1.ManyToOne)(() => Task_1.Task, { onDelete: "CASCADE" }),
+    (0, typeorm_1.JoinColumn)({ name: "depends_on_task_id" }),
     __metadata("design:type", Task_1.Task)
 ], TaskDependency.prototype, "dependsOnTask", void 0);
-__decorate([
-    (0, typeorm_1.CreateDateColumn)(),
-    __metadata("design:type", Date)
-], TaskDependency.prototype, "createdAt", void 0);
 exports.TaskDependency = TaskDependency = __decorate([
-    (0, typeorm_1.Entity)('task_dependency')
+    (0, typeorm_1.Entity)("task_dependencies"),
+    (0, typeorm_1.Unique)(["taskId", "dependsOnTaskId"])
 ], TaskDependency);

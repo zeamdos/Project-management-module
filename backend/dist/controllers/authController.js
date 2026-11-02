@@ -3,312 +3,234 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.getDevelopers = exports.updateProfile = exports.getProfile = exports.login = exports.register = void 0;
-const bcryptjs_1 = __importDefault(require("bcryptjs"));
-const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
+exports.AuthController = void 0;
 const data_source_1 = require("../config/data-source");
 const User_1 = require("../entities/User");
 const Organization_1 = require("../entities/Organization");
 const Skill_1 = require("../entities/Skill");
 const UserSkill_1 = require("../entities/UserSkill");
-const config_1 = require("../config");
-const userRepository = data_source_1.AppDataSource.getRepository(User_1.User);
-const orgRepository = data_source_1.AppDataSource.getRepository(Organization_1.Organization);
-const skillRepository = data_source_1.AppDataSource.getRepository(Skill_1.Skill);
-const userSkillRepository = data_source_1.AppDataSource.getRepository(UserSkill_1.UserSkill);
-const register = async (req, res) => {
-    try {
-        const { name, email, phone, password, role = User_1.UserRole.DEVELOPER, team, // 'ui_ux' | 'frontend' | 'backend'
-        specialty, skills, // array or comma-separated string
-        githubUsername, telegramId, orgName } = req.body;
-        // Validation: Phone and Team are required for developers
-        const chosenRole = role === 'manager' || role === User_1.UserRole.MANAGER ? User_1.UserRole.MANAGER : User_1.UserRole.DEVELOPER;
-        const devSpecialty = team || specialty || 'frontend';
-        if (chosenRole === User_1.UserRole.DEVELOPER) {
-            if (!phone) {
-                return res.status(400).json({ error: 'Phone number is required for developers' });
+const AuditService_1 = require("../services/AuditService");
+const bcryptjs_1 = __importDefault(require("bcryptjs"));
+const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
+// Must match the organization created by seedMasterUsers() in index.ts,
+// otherwise developers and the PM end up in different organizations.
+const DEFAULT_ORG_NAME = "Enterprise HQ";
+const TEAMS = ["Frontend", "Backend", "UI/UX", "AI"];
+function passwordError(password) {
+    if (password.length < 10)
+        return "Password must be at least 10 characters.";
+    if (!/[A-Z]/.test(password))
+        return "Password must include an uppercase letter.";
+    if (!/[a-z]/.test(password))
+        return "Password must include a lowercase letter.";
+    if (!/[0-9]/.test(password))
+        return "Password must include a number.";
+    if (!/[^A-Za-z0-9]/.test(password))
+        return "Password must include a symbol.";
+    return null;
+}
+const envAdminEmail = () => (process.env.ADMIN_EMAIL || "admin@enterprise.com").toLowerCase().trim();
+const envPmEmail = () => (process.env.PM_EMAIL || "pm@enterprise.com").toLowerCase().trim();
+async function getDefaultOrg() {
+    const orgRepo = data_source_1.AppDataSource.getRepository(Organization_1.Organization);
+    let org = await orgRepo.findOne({ where: { name: DEFAULT_ORG_NAME } });
+    if (!org) {
+        org = orgRepo.create({ name: DEFAULT_ORG_NAME });
+        await orgRepo.save(org);
+    }
+    return org;
+}
+// Some tables (like skills) carry an orgId column that cannot be empty.
+function hasOrgColumn(entity) {
+    return !!data_source_1.AppDataSource.getMetadata(entity).findColumnWithPropertyName("orgId");
+}
+// Accepts "zeamdos", "@zeamdos" or "https://github.com/zeamdos" and returns "zeamdos".
+function cleanGithubUsername(input) {
+    const raw = String(input ?? "").trim().replace(/^@/, "");
+    if (!raw)
+        return null;
+    const match = raw.match(/github\.com\/([^/?#\s]+)/i);
+    return (match ? match[1] : raw) || null;
+}
+function publicUser(user) {
+    return {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        orgId: user.orgId,
+        specialty: user.specialty,
+        telegramLinked: !!user.telegramChatId,
+    };
+}
+class AuthController {
+    static async register(req, res) {
+        try {
+            const { email, password, name, specialty, skills, githubUsername, githubToken, phoneNumber } = req.body;
+            if (!email || !password || !name || !specialty) {
+                res.status(400).json({ error: "Name, email, password and team are required" });
+                return;
             }
-            if (!devSpecialty) {
-                return res.status(400).json({ error: 'Team (UI/UX, Frontend, or Backend) is required' });
+            if (!TEAMS.includes(specialty)) {
+                res.status(400).json({ error: `Team must be one of: ${TEAMS.join(", ")}` });
+                return;
             }
-            if (!skills || (Array.isArray(skills) && skills.length === 0)) {
-                return res.status(400).json({ error: 'Developer skills are required' });
+            const pwdProblem = passwordError(String(password));
+            if (pwdProblem) {
+                res.status(400).json({ error: pwdProblem });
+                return;
             }
-        }
-        // Check if user exists by email or phone
-        const existingByEmail = email ? await userRepository.findOne({ where: { email } }) : null;
-        if (existingByEmail) {
-            return res.status(400).json({ error: 'User with this email already exists' });
-        }
-        if (phone) {
-            const existingByPhone = await userRepository.findOne({ where: { phone } });
-            if (existingByPhone) {
-                return res.status(400).json({ error: 'User with this phone number already exists' });
+            const normalizedEmail = String(email).toLowerCase().trim();
+            // Admin and PM accounts come from .env only. Nobody can register with those emails.
+            if (normalizedEmail === envAdminEmail() || normalizedEmail === envPmEmail()) {
+                res.status(403).json({ error: "This email is reserved. Please sign in instead." });
+                return;
             }
-        }
-        // Hash password
-        const passwordHash = await bcryptjs_1.default.hash(password || '123456', 10);
-        // Create or get organization
-        let organization;
-        const targetOrg = orgName || 'Default Workspace';
-        organization = await orgRepository.findOne({ where: { name: targetOrg } });
-        if (!organization) {
-            organization = orgRepository.create({ name: targetOrg });
-            await orgRepository.save(organization);
-        }
-        // Create user
-        const user = new User_1.User();
-        user.name = name;
-        user.email = email || `${phone || Date.now()}@workspace.local`;
-        user.phone = phone || null;
-        user.passwordHash = passwordHash;
-        user.role = chosenRole;
-        user.orgId = organization.id;
-        user.status = User_1.UserStatus.ACTIVE;
-        user.specialty = devSpecialty;
-        user.githubUsername = githubUsername || null;
-        user.telegramId = telegramId ? String(telegramId) : null;
-        await userRepository.save(user);
-        // Parse and save skills
-        const skillList = Array.isArray(skills)
-            ? skills
-            : typeof skills === 'string'
-                ? skills.split(',').map((s) => s.trim()).filter(Boolean)
-                : [];
-        for (const skillName of skillList) {
-            let skillEntity = await skillRepository.findOne({ where: { name: skillName } });
-            if (!skillEntity) {
-                skillEntity = skillRepository.create({
-                    name: skillName,
-                    specialty: devSpecialty,
-                    status: Skill_1.SkillStatus.ACTIVE,
-                });
-                await skillRepository.save(skillEntity);
+            const existingUser = await data_source_1.AppDataSource.getRepository(User_1.User).findOne({ where: { email: normalizedEmail } });
+            if (existingUser) {
+                res.status(400).json({ error: "Email already registered" });
+                return;
             }
-            const userSkill = userSkillRepository.create({
-                userId: user.id,
-                skillId: skillEntity.id,
-                proficiency: UserSkill_1.Proficiency.INTERMEDIATE,
-                yearsExperience: 1,
-            });
-            await userSkillRepository.save(userSkill);
-        }
-        // Generate token
-        const token = jsonwebtoken_1.default.sign({ userId: user.id, role: user.role, orgId: user.orgId }, config_1.config.jwt.secret, { expiresIn: config_1.config.jwt.expiresIn });
-        res.status(201).json({
-            message: 'User registered successfully',
-            token,
-            user: {
-                id: user.id,
-                name: user.name,
-                email: user.email,
-                phone: user.phone,
-                role: user.role,
-                specialty: user.specialty,
-                githubUsername: user.githubUsername,
-                telegramId: user.telegramId,
-                skills: skillList,
-            },
-        });
-    }
-    catch (error) {
-        console.error('Registration error:', error);
-        res.status(500).json({ error: 'Internal server error' });
-    }
-};
-exports.register = register;
-const login = async (req, res) => {
-    try {
-        const { email, phone, phoneOrEmail, password } = req.body;
-        const identifier = (phoneOrEmail || email || phone || '').trim();
-        if (!identifier || !password) {
-            return res.status(400).json({ error: 'Phone/Email and password are required' });
-        }
-        // Find user by email OR phone
-        let user = await userRepository.findOne({ where: { email: identifier } });
-        if (!user) {
-            user = await userRepository.findOne({ where: { phone: identifier } });
-        }
-        if (!user) {
-            return res.status(401).json({ error: 'Invalid credentials' });
-        }
-        // Check password
-        const isValidPassword = await bcryptjs_1.default.compare(password, user.passwordHash);
-        if (!isValidPassword) {
-            return res.status(401).json({ error: 'Invalid credentials' });
-        }
-        // Check status
-        if (user.status !== User_1.UserStatus.ACTIVE) {
-            return res.status(403).json({ error: 'Account is not active' });
-        }
-        // Fetch user skills
-        const userSkills = await userSkillRepository.find({
-            where: { userId: user.id },
-            relations: ['skill'],
-        });
-        const skills = userSkills.map(us => us.skill?.name).filter(Boolean);
-        // Generate token
-        const token = jsonwebtoken_1.default.sign({ userId: user.id, role: user.role, orgId: user.orgId }, config_1.config.jwt.secret, { expiresIn: config_1.config.jwt.expiresIn });
-        res.json({
-            message: 'Login successful',
-            token,
-            user: {
-                id: user.id,
-                name: user.name,
-                email: user.email,
-                phone: user.phone,
-                role: user.role,
-                specialty: user.specialty,
-                githubUsername: user.githubUsername,
-                telegramId: user.telegramId,
-                skills,
-                orgId: user.orgId,
-            },
-        });
-    }
-    catch (error) {
-        console.error('Login error:', error);
-        res.status(500).json({ error: 'Internal server error' });
-    }
-};
-exports.login = login;
-const getProfile = async (req, res) => {
-    try {
-        const user = await userRepository.findOne({
-            where: { id: req.userId },
-            relations: ['organization'],
-        });
-        if (!user) {
-            return res.status(404).json({ error: 'User not found' });
-        }
-        const userSkills = await userSkillRepository.find({
-            where: { userId: user.id },
-            relations: ['skill'],
-        });
-        const skills = userSkills.map(us => us.skill?.name).filter(Boolean);
-        res.json({
-            id: user.id,
-            name: user.name,
-            email: user.email,
-            phone: user.phone,
-            role: user.role,
-            specialty: user.specialty,
-            telegramId: user.telegramId,
-            githubUsername: user.githubUsername,
-            timezone: user.timezone,
-            language: user.language,
-            status: user.status,
-            skills,
-            organization: user.organization
-                ? {
-                    id: user.organization.id,
-                    name: user.organization.name,
-                }
-                : null,
-        });
-    }
-    catch (error) {
-        console.error('Get profile error:', error);
-        res.status(500).json({ error: 'Internal server error' });
-    }
-};
-exports.getProfile = getProfile;
-const updateProfile = async (req, res) => {
-    try {
-        const { name, specialty, phone, telegramId, githubUsername, timezone, language, skills } = req.body;
-        const user = await userRepository.findOne({ where: { id: req.userId } });
-        if (!user) {
-            return res.status(404).json({ error: 'User not found' });
-        }
-        if (name)
-            user.name = name;
-        if (specialty !== undefined)
-            user.specialty = specialty;
-        if (phone !== undefined)
-            user.phone = phone;
-        if (telegramId !== undefined)
-            user.telegramId = telegramId ? String(telegramId) : null;
-        if (githubUsername !== undefined)
-            user.githubUsername = githubUsername;
-        if (timezone !== undefined)
-            user.timezone = timezone;
-        if (language !== undefined)
-            user.language = language;
-        await userRepository.save(user);
-        if (skills && Array.isArray(skills)) {
-            await userSkillRepository.delete({ userId: user.id });
-            for (const skillName of skills) {
-                let skillEntity = await skillRepository.findOne({ where: { name: skillName } });
-                if (!skillEntity) {
-                    skillEntity = skillRepository.create({
-                        name: skillName,
-                        specialty: user.specialty || 'general',
-                        status: Skill_1.SkillStatus.ACTIVE,
-                    });
-                    await skillRepository.save(skillEntity);
-                }
-                await userSkillRepository.save(userSkillRepository.create({
-                    userId: user.id,
-                    skillId: skillEntity.id,
-                    proficiency: UserSkill_1.Proficiency.INTERMEDIATE,
-                    yearsExperience: 1,
+            const organization = await getDefaultOrg();
+            const passwordHash = await bcryptjs_1.default.hash(String(password), 12);
+            const skillNames = Array.from(new Set((Array.isArray(skills) ? skills : []).map((s) => String(s).trim()).filter(Boolean)));
+            // Everything below succeeds together or not at all, so a failed signup never leaves a half-made account.
+            const user = await data_source_1.AppDataSource.transaction(async (manager) => {
+                const userRepo = manager.getRepository(User_1.User);
+                const skillRepo = manager.getRepository(Skill_1.Skill);
+                const userSkillRepo = manager.getRepository(UserSkill_1.UserSkill);
+                const created = await userRepo.save(userRepo.create({
+                    orgId: organization.id,
+                    email: normalizedEmail,
+                    passwordHash,
+                    name: String(name).trim(),
+                    role: User_1.UserRole.DEVELOPER,
+                    status: User_1.UserStatus.ACTIVE,
+                    specialty,
+                    githubUsername: cleanGithubUsername(githubUsername),
+                    githubToken: githubToken || null,
+                    phoneNumber: phoneNumber || null,
                 }));
-            }
-        }
-        const updatedUserSkills = await userSkillRepository.find({
-            where: { userId: user.id },
-            relations: ['skill'],
-        });
-        res.json({
-            message: 'Profile updated successfully',
-            user: {
-                id: user.id,
-                name: user.name,
-                email: user.email,
-                phone: user.phone,
+                const skillsHaveOrg = hasOrgColumn(Skill_1.Skill);
+                const userSkillsHaveOrg = hasOrgColumn(UserSkill_1.UserSkill);
+                for (const skillName of skillNames) {
+                    const skillWhere = skillsHaveOrg ? { name: skillName, orgId: organization.id } : { name: skillName };
+                    let skill = await skillRepo.findOne({ where: skillWhere });
+                    if (!skill) {
+                        const skillData = (skillsHaveOrg ? { name: skillName, orgId: organization.id } : { name: skillName });
+                        skill = await skillRepo.save(skillRepo.create(skillData));
+                    }
+                    const linkData = (userSkillsHaveOrg
+                        ? { userId: created.id, skillId: skill.id, orgId: organization.id }
+                        : { userId: created.id, skillId: skill.id });
+                    await userSkillRepo.save(userSkillRepo.create(linkData));
+                }
+                return created;
+            });
+            await AuditService_1.AuditService.log(organization.id, user.id, "REGISTER", "User", user.id, `Developer registered in the ${specialty} team`);
+            res.status(201).json({
+                message: "User registered successfully",
+                userId: user.id,
                 role: user.role,
                 specialty: user.specialty,
-                telegramId: user.telegramId,
-                githubUsername: user.githubUsername,
-                skills: updatedUserSkills.map(us => us.skill?.name).filter(Boolean),
-                timezone: user.timezone,
-                language: user.language,
-            },
-        });
-    }
-    catch (error) {
-        console.error('Update profile error:', error);
-        res.status(500).json({ error: 'Internal server error' });
-    }
-};
-exports.updateProfile = updateProfile;
-const getDevelopers = async (req, res) => {
-    try {
-        const developers = await userRepository.find({
-            where: { orgId: req.orgId, role: User_1.UserRole.DEVELOPER },
-            order: { name: 'ASC' },
-        });
-        const results = await Promise.all(developers.map(async (dev) => {
-            const uSkills = await userSkillRepository.find({
-                where: { userId: dev.id },
-                relations: ['skill'],
             });
-            return {
-                id: dev.id,
-                name: dev.name,
-                email: dev.email,
-                phone: dev.phone,
-                specialty: dev.specialty,
-                githubUsername: dev.githubUsername,
-                telegramId: dev.telegramId,
-                skills: uSkills.map(s => s.skill?.name).filter(Boolean),
-            };
-        }));
-        res.json({ developers: results });
+        }
+        catch (error) {
+            console.error("Registration error:", error);
+            res.status(500).json({ error: error.message || "Internal server error during registration" });
+        }
     }
-    catch (error) {
-        console.error('Get developers error:', error);
-        res.status(500).json({ error: 'Internal server error' });
+    static async login(req, res) {
+        try {
+            const email = String(req.body.email || "").toLowerCase().trim();
+            const password = String(req.body.password || "");
+            if (!email || !password) {
+                res.status(400).json({ error: "Email and password are required" });
+                return;
+            }
+            const userRepo = data_source_1.AppDataSource.getRepository(User_1.User);
+            // passwordHash is select:false on the entity, so it must be requested explicitly.
+            const existing = await userRepo
+                .createQueryBuilder("user")
+                .addSelect("user.passwordHash")
+                .where("user.email = :email", { email })
+                .getOne();
+            // Does this login match the .env admin / PM credentials?
+            let envRole = null;
+            let envName = "";
+            if (email === envAdminEmail() && password === process.env.ADMIN_PASSWORD) {
+                envRole = User_1.UserRole.ADMIN;
+                envName = "Master Admin";
+            }
+            else if (email === envPmEmail() && password === process.env.PM_PASSWORD) {
+                envRole = User_1.UserRole.MANAGER;
+                envName = "Project Manager";
+            }
+            let account;
+            if (envRole) {
+                if (!existing) {
+                    const org = await getDefaultOrg();
+                    account = userRepo.create({
+                        orgId: org.id,
+                        email,
+                        passwordHash: await bcryptjs_1.default.hash(password, 10),
+                        name: envName,
+                        role: envRole,
+                        status: User_1.UserStatus.ACTIVE,
+                    });
+                    await userRepo.save(account);
+                }
+                else {
+                    account = existing;
+                    const sameHash = account.passwordHash ? await bcryptjs_1.default.compare(password, account.passwordHash) : false;
+                    if (!sameHash || account.role !== envRole) {
+                        account.passwordHash = await bcryptjs_1.default.hash(password, 10);
+                        account.role = envRole;
+                        await userRepo.save(account);
+                    }
+                }
+            }
+            else {
+                if (!existing || !existing.passwordHash) {
+                    res.status(401).json({ error: "Invalid email or password" });
+                    return;
+                }
+                if (existing.lockedUntil && existing.lockedUntil.getTime() > Date.now()) {
+                    res.status(423).json({ error: "Account locked after too many failed sign-ins. Try again in 30 minutes." });
+                    return;
+                }
+                const isMatch = await bcryptjs_1.default.compare(password, existing.passwordHash);
+                if (!isMatch) {
+                    existing.failedLoginAttempts = (existing.failedLoginAttempts || 0) + 1;
+                    if (existing.failedLoginAttempts >= 5) {
+                        existing.lockedUntil = new Date(Date.now() + 30 * 60 * 1000);
+                        existing.failedLoginAttempts = 0;
+                    }
+                    await userRepo.save(existing);
+                    res.status(401).json({ error: "Invalid email or password" });
+                    return;
+                }
+                existing.failedLoginAttempts = 0;
+                existing.lockedUntil = null;
+                await userRepo.save(existing);
+                account = existing;
+            }
+            if (account.status !== User_1.UserStatus.ACTIVE) {
+                res.status(403).json({ error: "This account is not active. Contact your admin." });
+                return;
+            }
+            const secret = process.env.JWT_SECRET;
+            if (!secret) {
+                res.status(500).json({ error: "JWT_SECRET is not set in .env" });
+                return;
+            }
+            const token = jsonwebtoken_1.default.sign({ id: account.id, orgId: account.orgId, role: account.role, email: account.email }, secret, { expiresIn: "1d" });
+            res.json({ token, user: publicUser(account) });
+        }
+        catch (error) {
+            console.error("Login error:", error);
+            res.status(500).json({ error: error.message });
+        }
     }
-};
-exports.getDevelopers = getDevelopers;
+}
+exports.AuthController = AuthController;

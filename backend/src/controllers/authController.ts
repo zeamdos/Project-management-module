@@ -15,6 +15,15 @@ const DEFAULT_ORG_NAME = "Enterprise HQ";
 
 const TEAMS = ["Frontend", "Backend", "UI/UX", "AI"];
 
+function passwordError(password: string): string | null {
+  if (password.length < 10) return "Password must be at least 10 characters.";
+  if (!/[A-Z]/.test(password)) return "Password must include an uppercase letter.";
+  if (!/[a-z]/.test(password)) return "Password must include a lowercase letter.";
+  if (!/[0-9]/.test(password)) return "Password must include a number.";
+  if (!/[^A-Za-z0-9]/.test(password)) return "Password must include a symbol.";
+  return null;
+}
+
 const envAdminEmail = () => (process.env.ADMIN_EMAIL || "admin@enterprise.com").toLowerCase().trim();
 const envPmEmail = () => (process.env.PM_EMAIL || "pm@enterprise.com").toLowerCase().trim();
 
@@ -66,8 +75,9 @@ export class AuthController {
         res.status(400).json({ error: `Team must be one of: ${TEAMS.join(", ")}` });
         return;
       }
-      if (String(password).length < 8) {
-        res.status(400).json({ error: "Password must be at least 8 characters" });
+      const pwdProblem = passwordError(String(password));
+      if (pwdProblem) {
+        res.status(400).json({ error: pwdProblem });
         return;
       }
 
@@ -86,7 +96,7 @@ export class AuthController {
       }
 
       const organization = await getDefaultOrg();
-      const passwordHash = await bcrypt.hash(String(password), 10);
+      const passwordHash = await bcrypt.hash(String(password), 12);
       const skillNames = Array.from(
         new Set((Array.isArray(skills) ? skills : []).map((s: any) => String(s).trim()).filter(Boolean))
       ) as string[];
@@ -213,11 +223,24 @@ export class AuthController {
           res.status(401).json({ error: "Invalid email or password" });
           return;
         }
+        if (existing.lockedUntil && existing.lockedUntil.getTime() > Date.now()) {
+          res.status(423).json({ error: "Account locked after too many failed sign-ins. Try again in 30 minutes." });
+          return;
+        }
         const isMatch = await bcrypt.compare(password, existing.passwordHash);
         if (!isMatch) {
+          existing.failedLoginAttempts = (existing.failedLoginAttempts || 0) + 1;
+          if (existing.failedLoginAttempts >= 5) {
+            existing.lockedUntil = new Date(Date.now() + 30 * 60 * 1000);
+            existing.failedLoginAttempts = 0;
+          }
+          await userRepo.save(existing);
           res.status(401).json({ error: "Invalid email or password" });
           return;
         }
+        existing.failedLoginAttempts = 0;
+        existing.lockedUntil = null;
+        await userRepo.save(existing);
         account = existing;
       }
 

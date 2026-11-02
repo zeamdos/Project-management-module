@@ -9,16 +9,17 @@ var __metadata = (this && this.__metadata) || function (k, v) {
     if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.Review = exports.ReviewDecision = void 0;
+exports.Review = exports.ReviewStatus = void 0;
+// src/entities/Review.ts
 const typeorm_1 = require("typeorm");
 const Task_1 = require("./Task");
 const User_1 = require("./User");
-var ReviewDecision;
-(function (ReviewDecision) {
-    ReviewDecision["APPROVED"] = "approved";
-    ReviewDecision["CHANGES_REQUESTED"] = "changes_requested";
-    ReviewDecision["REJECTED"] = "rejected";
-})(ReviewDecision || (exports.ReviewDecision = ReviewDecision = {}));
+var ReviewStatus;
+(function (ReviewStatus) {
+    ReviewStatus["APPROVE"] = "APPROVE";
+    ReviewStatus["CHANGES_REQUESTED"] = "CHANGES_REQUESTED";
+    ReviewStatus["REJECTED"] = "REJECTED";
+})(ReviewStatus || (exports.ReviewStatus = ReviewStatus = {}));
 let Review = class Review {
 };
 exports.Review = Review;
@@ -27,43 +28,42 @@ __decorate([
     __metadata("design:type", Number)
 ], Review.prototype, "id", void 0);
 __decorate([
-    (0, typeorm_1.Column)({ type: 'int' }),
+    (0, typeorm_1.Column)({ type: "int" }),
     __metadata("design:type", Number)
-], Review.prototype, "prOrTaskId", void 0);
+], Review.prototype, "taskId", void 0);
 __decorate([
-    (0, typeorm_1.ManyToOne)(() => Task_1.Task, task => task.reviews),
-    (0, typeorm_1.JoinColumn)({ name: 'pr_or_task_id' }),
+    (0, typeorm_1.ManyToOne)(() => Task_1.Task, (task) => task.reviews, { onDelete: "CASCADE" }),
+    (0, typeorm_1.JoinColumn)({ name: "task_id" }),
     __metadata("design:type", Task_1.Task)
 ], Review.prototype, "task", void 0);
 __decorate([
-    (0, typeorm_1.Column)({ type: 'int' }),
+    (0, typeorm_1.Column)({ type: "int" }),
     __metadata("design:type", Number)
 ], Review.prototype, "reviewerId", void 0);
 __decorate([
-    (0, typeorm_1.ManyToOne)(() => User_1.User, user => user.reviews),
-    (0, typeorm_1.JoinColumn)({ name: 'reviewer_id' }),
+    (0, typeorm_1.ManyToOne)(() => User_1.User, (user) => user.reviews, { onDelete: "CASCADE" }),
+    (0, typeorm_1.JoinColumn)({ name: "reviewer_id" }),
     __metadata("design:type", User_1.User)
 ], Review.prototype, "reviewer", void 0);
 __decorate([
     (0, typeorm_1.Column)({
-        type: 'varchar', length: 50,
-        enum: ReviewDecision,
-        nullable: true
+        type: "enum",
+        enum: ReviewStatus,
     }),
-    __metadata("design:type", Object)
-], Review.prototype, "decision", void 0);
+    __metadata("design:type", String)
+], Review.prototype, "status", void 0);
 __decorate([
-    (0, typeorm_1.Column)({ type: 'text', nullable: true }),
+    (0, typeorm_1.Column)({ type: "text", nullable: true }),
     __metadata("design:type", Object)
-], Review.prototype, "comment", void 0);
-__decorate([
-    (0, typeorm_1.Column)({ type: 'datetime', nullable: true }),
-    __metadata("design:type", Object)
-], Review.prototype, "reviewDate", void 0);
+], Review.prototype, "comments", void 0);
 __decorate([
     (0, typeorm_1.CreateDateColumn)(),
     __metadata("design:type", Date)
 ], Review.prototype, "createdAt", void 0);
+__decorate([
+    (0, typeorm_1.UpdateDateColumn)(),
+    __metadata("design:type", Date)
+], Review.prototype, "updatedAt", void 0);
 exports.Review = Review = __decorate([
-    (0, typeorm_1.Entity)('review')
+    (0, typeorm_1.Entity)("reviews")
 ], Review);

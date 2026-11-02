@@ -21,31 +21,28 @@ __decorate([
     __metadata("design:type", Number)
 ], TeamMember.prototype, "id", void 0);
 __decorate([
-    (0, typeorm_1.Column)({ type: 'int' }),
+    (0, typeorm_1.Column)(),
     __metadata("design:type", Number)
 ], TeamMember.prototype, "teamId", void 0);
 __decorate([
-    (0, typeorm_1.ManyToOne)(() => Team_1.Team, team => team.members),
-    (0, typeorm_1.JoinColumn)({ name: 'team_id' }),
+    (0, typeorm_1.ManyToOne)(() => Team_1.Team, (team) => team.teamMembers, { onDelete: "CASCADE" }),
+    (0, typeorm_1.JoinColumn)({ name: "team_id" }),
     __metadata("design:type", Team_1.Team)
 ], TeamMember.prototype, "team", void 0);
 __decorate([
-    (0, typeorm_1.Column)({ type: 'int' }),
+    (0, typeorm_1.Column)(),
     __metadata("design:type", Number)
 ], TeamMember.prototype, "userId", void 0);
 __decorate([
-    (0, typeorm_1.ManyToOne)(() => User_1.User, user => user.teamMemberships),
-    (0, typeorm_1.JoinColumn)({ name: 'user_id' }),
+    (0, typeorm_1.ManyToOne)(() => User_1.User, (user) => user.teamMembers, { onDelete: "CASCADE" }),
+    (0, typeorm_1.JoinColumn)({ name: "user_id" }),
     __metadata("design:type", User_1.User)
 ], TeamMember.prototype, "user", void 0);
 __decorate([
-    (0, typeorm_1.Column)({ type: 'varchar', length: 50 }),
-    __metadata("design:type", String)
-], TeamMember.prototype, "role", void 0);
-__decorate([
-    (0, typeorm_1.CreateDateColumn)(),
-    __metadata("design:type", Date)
-], TeamMember.prototype, "joinedAt", void 0);
+    (0, typeorm_1.Column)({ default: false }),
+    __metadata("design:type", Boolean)
+], TeamMember.prototype, "isLead", void 0);
 exports.TeamMember = TeamMember = __decorate([
-    (0, typeorm_1.Entity)('team_member')
+    (0, typeorm_1.Entity)("team_members"),
+    (0, typeorm_1.Unique)(["teamId", "userId"])
 ], TeamMember);

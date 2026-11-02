@@ -1,7 +1,10 @@
 import TelegramBot from "node-telegram-bot-api";
 import crypto from "crypto";
+import { Not } from "typeorm";
 import { AppDataSource } from "../config/data-source";
 import { User } from "../entities/User";
+import { Task, TaskStatus } from "../entities/Task";
+import { ProgressService } from "./progressService";
 
 // One-time codes that tie a Telegram chat to a logged-in user.
 // Kept in memory for 10 minutes. If the server restarts, press "Connect Telegram" again.
@@ -76,13 +79,45 @@ export async function startTelegramBot(): Promise<void> {
     }
   });
 
-  // Any other message: reply so the bot never looks dead
+  bot.onText(/^\/blocker(?:@\w+)?(?:\s+(.+))?$/s, async (msg, match) => {
+    const chatId = String(msg.chat.id);
+    const description = (match?.[1] || "").trim();
+    try {
+      const user = await AppDataSource.getRepository(User).findOne({ where: { telegramChatId: chatId } });
+      if (!user) {
+        await bot.sendMessage(chatId, 'Link your account first: open the dashboard and press "Connect Telegram".');
+        return;
+      }
+      if (!description) {
+        await bot.sendMessage(chatId, "Usage: /blocker what is blocking you");
+        return;
+      }
+      const task = await AppDataSource.getRepository(Task).findOne({
+        where: { assigneeId: user.id, status: Not(TaskStatus.DONE) },
+        order: { id: "DESC" },
+      });
+      if (!task) {
+        await bot.sendMessage(chatId, "You have no open task to mark as blocked.");
+        return;
+      }
+      const result = await ProgressService.raiseBlocker(user.id, task.id, description);
+      if (result.error) {
+        await bot.sendMessage(chatId, result.error);
+        return;
+      }
+      await bot.sendMessage(chatId, `Blocker sent to your PM for TASK-${task.id}: ${task.title}`);
+    } catch (err: any) {
+      console.error("Telegram blocker error:", err?.message || err);
+    }
+  });
+
   bot.on("message", async (msg) => {
-    if ((msg.text || "").startsWith("/start")) return;
+    const text = msg.text || "";
+    if (text.startsWith("/start") || text.startsWith("/blocker")) return;
     try {
       await bot.sendMessage(
         String(msg.chat.id),
-        'I only send reminders and updates. Open your dashboard and press "Connect Telegram" to link your account.'
+        'I send reminders and take blockers. Raise a blocker with /blocker followed by a short description, or use the dashboard.'
       );
     } catch {}
   });

@@ -70,7 +70,7 @@ class TelegramService {
             `<b>Description:</b> ${task.description || 'N/A'}\n` +
             `--------------------------------\n` +
             `Please check your developer dashboard to start working!`;
-        return this.logAndSend(developer.id, developer.telegramId, 'task_assigned', msg);
+        return this.logAndSend(developer.id, developer.telegramChatId, 'task_assigned', msg);
     }
     async notifyDeadlineAlert(developer, task, project, hoursRemaining) {
         const deadlineStr = task.deadline ? new Date(task.deadline).toLocaleString() : 'Soon';
@@ -83,19 +83,19 @@ class TelegramService {
             `<b>Status:</b> ${String(task.status).toUpperCase()}\n` +
             `--------------------------------\n` +
             `Please submit your progress update or mark your task as done in the system!`;
-        return this.logAndSend(developer.id, developer.telegramId, 'deadline_reminder', msg);
+        return this.logAndSend(developer.id, developer.telegramChatId, 'deadline_reminder', msg);
     }
     async notifyWorkProgress(recipient, developer, task, project, workDone, status) {
         const msg = `⚡ <b>DEVELOPER PROGRESS UPDATE</b>\n` +
             `--------------------------------\n` +
-            `<b>Developer:</b> ${developer.name} (${developer.phone || 'Phone'})\n` +
+            `<b>Developer:</b> ${developer.name} (${developer.phoneNumber || 'Phone'})\n` +
             `<b>Task:</b> ${task.title}\n` +
             `<b>Project:</b> ${project?.title || 'Project'}\n` +
             `<b>New Status:</b> <b>${status.toUpperCase()}</b>\n` +
             `<b>Work Done:</b>\n${workDone}\n` +
             `--------------------------------\n` +
             `Ready for manager review!`;
-        return this.logAndSend(recipient.id, recipient.telegramId, 'progress_update', msg);
+        return this.logAndSend(recipient.id, recipient.telegramChatId, 'progress_update', msg);
     }
     async notifyReviewDecision(developer, reviewerName, task, decision, comment) {
         const icon = decision === 'approved' ? '✅' : decision === 'changes_requested' ? '🔄' : '❌';
@@ -107,17 +107,17 @@ class TelegramService {
             `<b>Feedback:</b> ${comment || 'No comments provided'}\n` +
             `--------------------------------\n` +
             `Check your dashboard for full review details.`;
-        return this.logAndSend(developer.id, developer.telegramId, 'review_decision', msg);
+        return this.logAndSend(developer.id, developer.telegramChatId, 'review_decision', msg);
     }
     async sendReminder(userId, message) {
         const userRepo = data_source_1.AppDataSource.getRepository(User_1.User);
         const user = await userRepo.findOne({ where: { id: userId } });
-        return this.logAndSend(userId, user?.telegramId || null, 'reminder', message);
+        return this.logAndSend(userId, user?.telegramChatId || null, 'reminder', message);
     }
     async sendEscalation(userId, message) {
         const userRepo = data_source_1.AppDataSource.getRepository(User_1.User);
         const user = await userRepo.findOne({ where: { id: userId } });
-        return this.logAndSend(userId, user?.telegramId || null, 'escalation', message);
+        return this.logAndSend(userId, user?.telegramChatId || null, 'escalation', message);
     }
     setupWebhook(webhookUrl) {
         if (this.bot) {

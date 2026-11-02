@@ -12,12 +12,12 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.Milestone = exports.MilestoneStatus = void 0;
 const typeorm_1 = require("typeorm");
 const Project_1 = require("./Project");
+const Task_1 = require("./Task");
 var MilestoneStatus;
 (function (MilestoneStatus) {
-    MilestoneStatus["PENDING"] = "pending";
-    MilestoneStatus["IN_PROGRESS"] = "in_progress";
-    MilestoneStatus["COMPLETED"] = "completed";
-    MilestoneStatus["DELAYED"] = "delayed";
+    MilestoneStatus["PENDING"] = "PENDING";
+    MilestoneStatus["IN_PROGRESS"] = "IN_PROGRESS";
+    MilestoneStatus["COMPLETED"] = "COMPLETED";
 })(MilestoneStatus || (exports.MilestoneStatus = MilestoneStatus = {}));
 let Milestone = class Milestone {
 };
@@ -27,34 +27,34 @@ __decorate([
     __metadata("design:type", Number)
 ], Milestone.prototype, "id", void 0);
 __decorate([
-    (0, typeorm_1.Column)({ type: 'int' }),
+    (0, typeorm_1.Column)({ type: "int" }),
     __metadata("design:type", Number)
 ], Milestone.prototype, "projectId", void 0);
 __decorate([
-    (0, typeorm_1.ManyToOne)(() => Project_1.Project, project => project.milestones),
-    (0, typeorm_1.JoinColumn)({ name: 'project_id' }),
+    (0, typeorm_1.ManyToOne)(() => Project_1.Project, (project) => project.milestones, { onDelete: "CASCADE" }),
+    (0, typeorm_1.JoinColumn)({ name: "project_id" }),
     __metadata("design:type", Project_1.Project)
 ], Milestone.prototype, "project", void 0);
 __decorate([
-    (0, typeorm_1.Column)({ type: 'varchar', length: 255 }),
+    (0, typeorm_1.Column)({ type: "varchar" }),
     __metadata("design:type", String)
-], Milestone.prototype, "title", void 0);
+], Milestone.prototype, "name", void 0);
 __decorate([
-    (0, typeorm_1.Column)({ type: 'text', nullable: true }),
-    __metadata("design:type", String)
+    (0, typeorm_1.Column)({ type: "text", nullable: true }),
+    __metadata("design:type", Object)
 ], Milestone.prototype, "description", void 0);
 __decorate([
-    (0, typeorm_1.Column)({ type: 'date' }),
-    __metadata("design:type", Date)
-], Milestone.prototype, "deadline", void 0);
-__decorate([
     (0, typeorm_1.Column)({
-        type: 'varchar', length: 50,
+        type: "enum",
         enum: MilestoneStatus,
-        default: MilestoneStatus.PENDING
+        default: MilestoneStatus.PENDING,
     }),
     __metadata("design:type", String)
 ], Milestone.prototype, "status", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: "timestamp", nullable: true }),
+    __metadata("design:type", Object)
+], Milestone.prototype, "dueDate", void 0);
 __decorate([
     (0, typeorm_1.CreateDateColumn)(),
     __metadata("design:type", Date)
@@ -63,6 +63,10 @@ __decorate([
     (0, typeorm_1.UpdateDateColumn)(),
     __metadata("design:type", Date)
 ], Milestone.prototype, "updatedAt", void 0);
+__decorate([
+    (0, typeorm_1.OneToMany)(() => Task_1.Task, (task) => task.milestone),
+    __metadata("design:type", Array)
+], Milestone.prototype, "tasks", void 0);
 exports.Milestone = Milestone = __decorate([
-    (0, typeorm_1.Entity)('milestone')
+    (0, typeorm_1.Entity)("milestones")
 ], Milestone);

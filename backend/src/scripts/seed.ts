@@ -78,9 +78,61 @@ async function seed() {
     await userRepo.save(pm);
   }
 
+  // 4. Create Dedicated Enterprise Developers
+  const seedDevs = [
 
+    {
+      name: "Alex Mercer",
+      email: "alex.mercer@enterprise.com",
+      specialty: "Frontend",
+      githubUsername: "alexmercer-dev",
+      teamIndex: 0, // Frontend Team
+    },
+    {
+      name: "David Kim",
+      email: "david.kim@enterprise.com",
+      specialty: "Backend",
+      githubUsername: "dkim-backend",
+      teamIndex: 1, // Backend Team
+    },
+    {
+      name: "Elena Rostova",
+      email: "elena.rostova@enterprise.com",
+      specialty: "UI/UX",
+      githubUsername: "elenar-design",
+      teamIndex: 2, // UI/UX Team
+    },
+    {
+      name: "Marcus Vance",
+      email: "marcus.vance@enterprise.com",
+      specialty: "AI",
+      githubUsername: "marcusv-ai",
+      teamIndex: 3, // AI Team
+    },
+  ];
 
-  // 5. Create Project
+  const defaultDevPass = process.env.DEFAULT_DEV_PASSWORD || "Developer123!";
+  const devPassHash = await bcrypt.hash(defaultDevPass, salt);
+  const createdDevUsers: User[] = [];
+
+  for (const devInfo of seedDevs) {
+    let dev = await userRepo.findOne({ where: { email: devInfo.email.toLowerCase().trim() } });
+    if (!dev) {
+      dev = userRepo.create({
+        orgId: org.id,
+        email: devInfo.email.toLowerCase().trim(),
+        passwordHash: devPassHash,
+        name: devInfo.name,
+        role: UserRole.DEVELOPER,
+        status: UserStatus.ACTIVE,
+        specialty: devInfo.specialty,
+        githubUsername: devInfo.githubUsername,
+      });
+      await userRepo.save(dev);
+    }
+    createdDevUsers.push(dev);
+  }
+
   let project = await projectRepo.findOne({ where: { name: "NextGen Platform" } });
   if (!project) {
     project = projectRepo.create({
@@ -123,6 +175,20 @@ async function seed() {
       await teamMemberRepo.save(tm);
     }
   }
+
+  // 8. Add Developers to their corresponding specialized teams
+  for (let i = 0; i < createdDevUsers.length; i++) {
+    const dev = createdDevUsers[i];
+    const targetTeam = createdTeams[seedDevs[i].teamIndex];
+    if (targetTeam) {
+      const existingTm = await teamMemberRepo.findOne({ where: { teamId: targetTeam.id, userId: dev.id } });
+      if (!existingTm) {
+        const tm = teamMemberRepo.create({ teamId: targetTeam.id, userId: dev.id, isLead: false });
+        await teamMemberRepo.save(tm);
+      }
+    }
+  }
+
 
   console.log("Seeding completed successfully!");
   process.exit(0);

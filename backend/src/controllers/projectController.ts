@@ -2,7 +2,7 @@ import crypto from "crypto";
 import { Response } from "express";
 import { AuthRequest } from "../middleware/auth";
 import { AppDataSource } from "../config/data-source";
-import { Project } from "../entities/Project";
+import { Project, ProjectStatus } from "../entities/Project";
 import { Repository } from "../entities/Repository";
 import { AITaskService } from "../services/aiTaskService";
 import { AuditService } from "../services/AuditService";
@@ -68,7 +68,7 @@ export class ProjectController {
       }
 
       const orgId = user.orgId;
-      const { name, description, updateIntervalDays, deadline, requirements, repoUrl } = req.body;
+      const { name, description, updateIntervalDays, deadline, requirements, repoUrl, techStack } = req.body;
 
       if (!name || !description) {
         res.status(400).json({ error: "Project name and description are required." });
@@ -102,6 +102,8 @@ export class ProjectController {
         orgId,
         name,
         description,
+        status: ProjectStatus.ACTIVE,
+        techStack: techStack && String(techStack).trim() ? String(techStack).trim() : null,
         updateIntervalDays: Number(updateIntervalDays) === 3 ? 3 : 7,
         deadline: parsed.date,
         requirements: requirements && String(requirements).trim() ? String(requirements).trim() : null,
@@ -231,7 +233,7 @@ export class ProjectController {
 
       const orgId = user.orgId;
       const projectId = parseInt(req.params.id, 10);
-      const { name, description, updateIntervalDays } = req.body;
+      const { name, description, updateIntervalDays, status, statusReason, techStack } = req.body;
 
       const projectRepo = AppDataSource.getRepository(Project);
       const project = await projectRepo.findOne({ where: { id: projectId, orgId } });
@@ -244,6 +246,20 @@ export class ProjectController {
       if (name) project.name = name;
       if (description) project.description = description;
       if (updateIntervalDays) project.updateIntervalDays = updateIntervalDays;
+      if (techStack !== undefined) project.techStack = String(techStack || "").trim() || null;
+      if (status) {
+        const allowed = Object.values(ProjectStatus);
+        if (!allowed.includes(status)) {
+          res.status(400).json({ error: `Status must be one of: ${allowed.join(", ")}` });
+          return;
+        }
+        if (status !== project.status && !String(statusReason || "").trim()) {
+          res.status(400).json({ error: "Give a reason when you change the project status." });
+          return;
+        }
+        project.status = status;
+        project.statusReason = String(statusReason || "").trim() || null;
+      }
 
       await projectRepo.save(project);
       await AuditService.log(orgId, user.id, "UPDATE", "Project", project.id, `Updated project ${project.id}`);

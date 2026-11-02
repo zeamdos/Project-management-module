@@ -1,382 +1,273 @@
 "use strict";
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.checkProjectDeadlines = exports.getProjectStats = exports.deleteProject = exports.updateProject = exports.getProject = exports.getProjects = exports.createProject = void 0;
+exports.ProjectController = void 0;
+const crypto_1 = __importDefault(require("crypto"));
 const data_source_1 = require("../config/data-source");
 const Project_1 = require("../entities/Project");
-const Task_1 = require("../entities/Task");
-const Team_1 = require("../entities/Team");
-const TeamMember_1 = require("../entities/TeamMember");
-const Milestone_1 = require("../entities/Milestone");
-const User_1 = require("../entities/User");
-const telegramService_1 = require("../services/telegramService");
-const projectRepository = data_source_1.AppDataSource.getRepository(Project_1.Project);
-const taskRepository = data_source_1.AppDataSource.getRepository(Task_1.Task);
-const teamRepository = data_source_1.AppDataSource.getRepository(Team_1.Team);
-const teamMemberRepository = data_source_1.AppDataSource.getRepository(TeamMember_1.TeamMember);
-const milestoneRepository = data_source_1.AppDataSource.getRepository(Milestone_1.Milestone);
-const userRepository = data_source_1.AppDataSource.getRepository(User_1.User);
-const createProject = async (req, res) => {
+const Repository_1 = require("../entities/Repository");
+const aiTaskService_1 = require("../services/aiTaskService");
+const AuditService_1 = require("../services/AuditService");
+// Use the project's encrypt() if one exists, otherwise store the secret as it is
+// (webhookController does the same with decrypt()).
+let encrypt = (value) => value;
+for (const file of ["../config/encryption", "../config/Encryption"]) {
     try {
-        const { title, description, goals, techStack, startDate, deadline, updateIntervalDays, autoBreakdown = true } = req.body;
-        const start = startDate ? new Date(startDate) : new Date();
-        const end = deadline ? new Date(deadline) : new Date(Date.now() + 14 * 24 * 60 * 60 * 1000);
-        const project = new Project_1.Project();
-        project.orgId = req.orgId || 1;
-        project.title = title;
-        project.description = description;
-        project.goals = goals;
-        project.techStack = techStack || {};
-        project.startDate = start;
-        project.deadline = end;
-        project.updateIntervalDays = updateIntervalDays || 7;
-        project.status = Project_1.ProjectStatus.ACTIVE;
-        project.health = Project_1.ProjectHealth.ON_TRACK;
-        await projectRepository.save(project);
-        // 1. Create the 3 Standard Teams: UI/UX, Frontend, Backend
-        const teamConfigs = [
-            { name: 'UI/UX Design Team', type: Team_1.TeamType.UI_UX },
-            { name: 'Frontend Engineering Team', type: Team_1.TeamType.FRONTEND },
-            { name: 'Backend & Infrastructure Team', type: Team_1.TeamType.BACKEND },
-        ];
-        const createdTeams = {};
-        for (const conf of teamConfigs) {
-            const team = new Team_1.Team();
-            team.projectId = project.id;
-            team.name = conf.name;
-            team.type = conf.type;
-            team.deadline = end;
-            await teamRepository.save(team);
-            createdTeams[conf.type] = team;
+        const mod = require(file);
+        if (typeof mod.encrypt === "function") {
+            encrypt = mod.encrypt;
+            break;
         }
-        // 2. Fetch all registered developers in this organization
-        const orgDevelopers = await userRepository.find({
-            where: { orgId: req.orgId, role: User_1.UserRole.DEVELOPER },
-            relations: ['skills', 'skills.skill'],
-        });
-        // Group developers by team specialty
-        const devsBySpecialty = {
-            [Team_1.TeamType.UI_UX]: [],
-            [Team_1.TeamType.FRONTEND]: [],
-            [Team_1.TeamType.BACKEND]: [],
-        };
-        for (const dev of orgDevelopers) {
-            const spec = (dev.specialty || '').toLowerCase();
-            if (spec.includes('ui') || spec.includes('ux') || spec.includes('design')) {
-                devsBySpecialty[Team_1.TeamType.UI_UX].push(dev);
+    }
+    catch {
+        /* that file is not there, try the next name */
+    }
+}
+const COMPANY_GITHUB = (process.env.COMPANY_GITHUB_URL || "https://github.com/zeamdos").replace(/\/+$/, "");
+const slugify = (s) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60) || "project";
+// "2026-11-20" means the end of that day
+function parseDeadline(value) {
+    if (value === undefined || value === null || value === "")
+        return { date: null };
+    const text = String(value).trim();
+    const date = /^\d{4}-\d{2}-\d{2}$/.test(text) ? new Date(`${text}T23:59:59`) : new Date(text);
+    if (isNaN(date.getTime()))
+        return { error: "The deadline is not a valid date.", date: null };
+    if (date.getTime() <= Date.now())
+        return { error: "The deadline must be in the future.", date: null };
+    return { date };
+}
+function normalizeRepoUrl(value) {
+    const cleaned = value.trim().replace(/\/+$/, "").replace(/\.git$/i, "");
+    return /^https:\/\/github\.com\/[\w.-]+\/[\w.-]+$/i.test(cleaned) ? cleaned : null;
+}
+// Only send what the dashboard needs about an assignee (no email, phone or Telegram ID).
+function withSafeAssignees(project) {
+    return {
+        ...project,
+        tasks: (project.tasks || []).map((t) => ({
+            ...t,
+            assignee: t.assignee ? { id: t.assignee.id, name: t.assignee.name, specialty: t.assignee.specialty } : null,
+        })),
+    };
+}
+class ProjectController {
+    static canManageProjects(role) {
+        return ["ADMIN", "MANAGER", "PROJECT_MANAGER"].includes(String(role ?? ""));
+    }
+    static async create(req, res) {
+        let createdProjectId = null;
+        try {
+            const user = req.user;
+            if (!user || !ProjectController.canManageProjects(user.role)) {
+                res.status(403).json({ error: "Access denied. Only Admins and Project Managers can create projects." });
+                return;
             }
-            else if (spec.includes('back') || spec.includes('api') || spec.includes('data')) {
-                devsBySpecialty[Team_1.TeamType.BACKEND].push(dev);
+            const orgId = user.orgId;
+            const { name, description, updateIntervalDays, deadline, requirements, repoUrl, techStack } = req.body;
+            if (!name || !description) {
+                res.status(400).json({ error: "Project name and description are required." });
+                return;
             }
-            else {
-                // Default / Frontend
-                devsBySpecialty[Team_1.TeamType.FRONTEND].push(dev);
+            const parsed = parseDeadline(deadline);
+            if (parsed.error) {
+                res.status(400).json({ error: parsed.error });
+                return;
             }
-        }
-        // Assign developers to TeamMemberships for this project
-        for (const [tType, devList] of Object.entries(devsBySpecialty)) {
-            const team = createdTeams[tType];
-            if (team && devList.length > 0) {
-                for (const dev of devList) {
-                    const tm = teamMemberRepository.create({
-                        teamId: team.id,
-                        userId: dev.id,
-                        role: 'Developer',
-                    });
-                    await teamMemberRepository.save(tm);
+            const projectRepo = data_source_1.AppDataSource.getRepository(Project_1.Project);
+            const repoRepo = data_source_1.AppDataSource.getRepository(Repository_1.Repository);
+            // Repository link given by the PM: check it before saving anything
+            let chosenRepo = null;
+            if (repoUrl && String(repoUrl).trim()) {
+                chosenRepo = normalizeRepoUrl(String(repoUrl));
+                if (!chosenRepo) {
+                    res.status(400).json({ error: "The repository link must look like https://github.com/owner/repository." });
+                    return;
+                }
+                if (await repoRepo.findOne({ where: { url: chosenRepo } })) {
+                    res.status(400).json({ error: "That repository is already used by another project." });
+                    return;
                 }
             }
-        }
-        // 3. Intelligent Task Breakdown into UI/UX, Frontend, and Backend
-        if (autoBreakdown) {
-            const totalSpanMs = Math.max(end.getTime() - start.getTime(), 3 * 24 * 60 * 60 * 1000);
-            const templateTasks = [
-                {
-                    teamType: Team_1.TeamType.UI_UX,
-                    title: `UI/UX: Wireframing & Design System for ${title}`,
-                    description: `Create user flow diagrams, low-fidelity wireframes, typography tokens, and color palette adhering to requirements: ${goals || description || title}`,
-                    priority: Task_1.TaskPriority.HIGH,
-                    estimateHours: 16,
-                    fraction: 0.25,
-                },
-                {
-                    teamType: Team_1.TeamType.UI_UX,
-                    title: `UI/UX: High-Fidelity Interactive Prototypes`,
-                    description: `Deliver responsive screen mockups, component states (hover, error, active), and export assets for frontend integration.`,
-                    priority: Task_1.TaskPriority.MEDIUM,
-                    estimateHours: 20,
-                    fraction: 0.45,
-                },
-                {
-                    teamType: Team_1.TeamType.FRONTEND,
-                    title: `Frontend: Project Scaffolding & Component Library`,
-                    description: `Initialize frontend architecture, routing, design token setup, and base reusable component library matching UI designs.`,
-                    priority: Task_1.TaskPriority.HIGH,
-                    estimateHours: 24,
-                    fraction: 0.50,
-                },
-                {
-                    teamType: Team_1.TeamType.FRONTEND,
-                    title: `Frontend: State Management & Core User Flows`,
-                    description: `Implement client-side views, input validation, authentication guards, and state persistence for ${title}.`,
-                    priority: Task_1.TaskPriority.HIGH,
-                    estimateHours: 30,
-                    fraction: 0.75,
-                },
-                {
-                    teamType: Team_1.TeamType.FRONTEND,
-                    title: `Frontend: API Integration & Cross-Device Polish`,
-                    description: `Wire up backend endpoints, handle loading/error states, and ensure full mobile responsiveness.`,
-                    priority: Task_1.TaskPriority.HIGH,
-                    estimateHours: 20,
-                    fraction: 0.90,
-                },
-                {
-                    teamType: Team_1.TeamType.BACKEND,
-                    title: `Backend: Database Models & Architecture Setup`,
-                    description: `Define relational schemas, foreign keys, migrations, and seed initial records for ${title}.`,
-                    priority: Task_1.TaskPriority.HIGH,
-                    estimateHours: 18,
-                    fraction: 0.35,
-                },
-                {
-                    teamType: Team_1.TeamType.BACKEND,
-                    title: `Backend: REST API Endpoints & Business Logic`,
-                    description: `Develop secure CRUD routes, controller validations, access controls, and core functionality for ${title}.`,
-                    priority: Task_1.TaskPriority.CRITICAL,
-                    estimateHours: 35,
-                    fraction: 0.70,
-                },
-                {
-                    teamType: Team_1.TeamType.BACKEND,
-                    title: `Backend: Third-Party Integrations & Automated Testing`,
-                    description: `Integrate Telegram/webhooks, unit & integration test suites, and deploy to staging.`,
-                    priority: Task_1.TaskPriority.HIGH,
-                    estimateHours: 20,
-                    fraction: 0.88,
-                },
-            ];
-            // Counters to distribute tasks evenly across team developers
-            const devCounters = {
-                [Team_1.TeamType.UI_UX]: 0,
-                [Team_1.TeamType.FRONTEND]: 0,
-                [Team_1.TeamType.BACKEND]: 0,
-            };
-            for (const tpl of templateTasks) {
-                const team = createdTeams[tpl.teamType];
-                const teamDevs = devsBySpecialty[tpl.teamType];
-                let assignedDev = null;
-                if (teamDevs && teamDevs.length > 0) {
-                    const idx = devCounters[tpl.teamType] % teamDevs.length;
-                    assignedDev = teamDevs[idx];
-                    devCounters[tpl.teamType]++;
-                }
-                else if (orgDevelopers.length > 0) {
-                    // Fallback to any developer if team specialty is empty
-                    assignedDev = orgDevelopers[0];
-                }
-                const taskDeadline = new Date(start.getTime() + Math.floor(totalSpanMs * tpl.fraction));
-                const task = new Task_1.Task();
-                task.projectId = project.id;
-                task.teamId = team.id;
-                task.assigneeId = assignedDev ? assignedDev.id : null;
-                task.title = tpl.title;
-                task.description = tpl.description;
-                task.priority = tpl.priority;
-                task.estimateHours = tpl.estimateHours;
-                task.status = Task_1.TaskStatus.TODO;
-                task.deadline = taskDeadline;
-                await taskRepository.save(task);
-                // Send instant Telegram notification to the builder!
-                if (assignedDev && assignedDev.telegramId) {
-                    telegramService_1.telegramService.notifyTaskAssigned(assignedDev, task, project, team.name).catch(err => {
-                        console.error('Telegram notification error for user', assignedDev?.id, err);
-                    });
-                }
+            const project = projectRepo.create({
+                orgId,
+                name,
+                description,
+                status: Project_1.ProjectStatus.ACTIVE,
+                techStack: techStack && String(techStack).trim() ? String(techStack).trim() : null,
+                updateIntervalDays: Number(updateIntervalDays) === 3 ? 3 : 7,
+                deadline: parsed.date,
+                requirements: requirements && String(requirements).trim() ? String(requirements).trim() : null,
+            });
+            await projectRepo.save(project);
+            createdProjectId = project.id;
+            // No link from the PM: suggest one under the company GitHub
+            let suggested = false;
+            if (!chosenRepo) {
+                suggested = true;
+                let candidate = `${COMPANY_GITHUB}/${slugify(name)}`;
+                if (await repoRepo.findOne({ where: { url: candidate } }))
+                    candidate = `${candidate}-${project.id}`;
+                chosenRepo = candidate;
             }
+            const secret = crypto_1.default.randomBytes(20).toString("hex");
+            await repoRepo.save(repoRepo.create({ projectId: project.id, url: chosenRepo, webhookSecret: encrypt(secret) }));
+            // Split into tasks, create teams with deadlines, assign and notify
+            const assignedTasks = await aiTaskService_1.AITaskService.processAndAssignProject(project.id, description, orgId, {
+                name,
+                deadline: parsed.date,
+                requirements: project.requirements,
+                repoUrl: chosenRepo,
+            });
+            await AuditService_1.AuditService.log(orgId, user.id, "CREATE_WITH_AI", "Project", project.id, `Created project ${name} and auto-generated ${assignedTasks.length} AI tasks`);
+            const publicBase = (process.env.BACKEND_PUBLIC_URL || `http://localhost:${process.env.PORT || 3000}`).replace(/\/+$/, "");
+            res.status(201).json({
+                message: "Project created and successfully processed by AI engine!",
+                project,
+                tasks: assignedTasks.map((t) => ({
+                    id: t.id,
+                    title: t.title,
+                    requiredRole: t.requiredRole,
+                    status: t.status,
+                    deadline: t.deadline,
+                    assigneeId: t.assigneeId,
+                })),
+                repo: { url: chosenRepo, suggested },
+                // The secret is shown only now. It cannot be read again later.
+                webhook: {
+                    url: `${publicBase}/api/webhooks/github`,
+                    contentType: "application/json",
+                    secret,
+                    events: ["push", "pull_request"],
+                },
+            });
         }
-        const fullProject = await projectRepository.findOne({
-            where: { id: project.id },
-            relations: ['teams', 'teams.members', 'tasks', 'tasks.assignee'],
-        });
-        res.status(201).json({
-            message: 'Project created and automatically broken down into teams & tasks successfully!',
-            project: fullProject,
-        });
-    }
-    catch (error) {
-        console.error('Create project error:', error);
-        res.status(500).json({ error: 'Internal server error' });
-    }
-};
-exports.createProject = createProject;
-const getProjects = async (req, res) => {
-    try {
-        const projects = await projectRepository.find({
-            where: { orgId: req.orgId },
-            relations: ['teams', 'tasks', 'tasks.assignee'],
-            order: { createdAt: 'DESC' },
-        });
-        res.json({ projects });
-    }
-    catch (error) {
-        console.error('Get projects error:', error);
-        res.status(500).json({ error: 'Internal server error' });
-    }
-};
-exports.getProjects = getProjects;
-const getProject = async (req, res) => {
-    try {
-        const { id } = req.params;
-        const project = await projectRepository.findOne({
-            where: { id: parseInt(id), orgId: req.orgId },
-            relations: ['teams', 'teams.members', 'milestones', 'tasks', 'tasks.assignee', 'repositories'],
-        });
-        if (!project) {
-            return res.status(404).json({ error: 'Project not found' });
-        }
-        res.json({ project });
-    }
-    catch (error) {
-        console.error('Get project error:', error);
-        res.status(500).json({ error: 'Internal server error' });
-    }
-};
-exports.getProject = getProject;
-const updateProject = async (req, res) => {
-    try {
-        const { id } = req.params;
-        const { title, description, goals, techStack, startDate, deadline, status, health } = req.body;
-        const project = await projectRepository.findOne({
-            where: { id: parseInt(id), orgId: req.orgId },
-        });
-        if (!project) {
-            return res.status(404).json({ error: 'Project not found' });
-        }
-        if (title)
-            project.title = title;
-        if (description !== undefined)
-            project.description = description;
-        if (goals !== undefined)
-            project.goals = goals;
-        if (techStack !== undefined)
-            project.techStack = techStack;
-        if (startDate !== undefined)
-            project.startDate = startDate ? new Date(startDate) : null;
-        if (deadline !== undefined)
-            project.deadline = deadline ? new Date(deadline) : null;
-        if (status)
-            project.status = status;
-        if (health)
-            project.health = health;
-        await projectRepository.save(project);
-        res.json({
-            message: 'Project updated successfully',
-            project,
-        });
-    }
-    catch (error) {
-        console.error('Update project error:', error);
-        res.status(500).json({ error: 'Internal server error' });
-    }
-};
-exports.updateProject = updateProject;
-const deleteProject = async (req, res) => {
-    try {
-        const { id } = req.params;
-        const project = await projectRepository.findOne({
-            where: { id: parseInt(id), orgId: req.orgId },
-        });
-        if (!project) {
-            return res.status(404).json({ error: 'Project not found' });
-        }
-        await projectRepository.remove(project);
-        res.json({ message: 'Project deleted successfully' });
-    }
-    catch (error) {
-        console.error('Delete project error:', error);
-        res.status(500).json({ error: 'Internal server error' });
-    }
-};
-exports.deleteProject = deleteProject;
-const getProjectStats = async (req, res) => {
-    try {
-        const { id } = req.params;
-        const project = await projectRepository.findOne({
-            where: { id: parseInt(id), orgId: req.orgId },
-        });
-        if (!project) {
-            return res.status(404).json({ error: 'Project not found' });
-        }
-        const tasks = await taskRepository.find({ where: { projectId: parseInt(id) } });
-        const teams = await teamRepository.find({ where: { projectId: parseInt(id) } });
-        const totalTasks = tasks.length;
-        const completedTasks = tasks.filter(t => t.status === Task_1.TaskStatus.DONE).length;
-        const inProgressTasks = tasks.filter(t => t.status === Task_1.TaskStatus.IN_PROGRESS).length;
-        const inReviewTasks = tasks.filter(t => t.status === Task_1.TaskStatus.IN_REVIEW).length;
-        const blockedTasks = tasks.filter(t => t.status === Task_1.TaskStatus.BLOCKED).length;
-        res.json({
-            stats: {
-                totalTasks,
-                completedTasks,
-                inProgressTasks,
-                inReviewTasks,
-                blockedTasks,
-                taskCompletionRate: totalTasks > 0 ? (completedTasks / totalTasks) * 100 : 0,
-                totalTeams: teams.length,
-            },
-        });
-    }
-    catch (error) {
-        console.error('Get project stats error:', error);
-        res.status(500).json({ error: 'Internal server error' });
-    }
-};
-exports.getProjectStats = getProjectStats;
-// Check upcoming deadlines and send Telegram notifications to developers
-const checkProjectDeadlines = async (req, res) => {
-    try {
-        const { id } = req.params;
-        const where = { status: Task_1.TaskStatus.TODO };
-        const tasks = await taskRepository.find({
-            where: id ? { projectId: parseInt(id) } : {},
-            relations: ['assignee', 'project'],
-        });
-        const now = Date.now();
-        let notificationsSent = 0;
-        const alertResults = [];
-        for (const task of tasks) {
-            if (task.status === Task_1.TaskStatus.DONE)
-                continue;
-            if (!task.deadline || !task.assignee)
-                continue;
-            const dueMs = new Date(task.deadline).getTime();
-            const diffHours = (dueMs - now) / (1000 * 60 * 60);
-            // Alert if due within 48 hours, or overdue
-            if (diffHours <= 48) {
-                if (task.assignee.telegramId) {
-                    const sent = await telegramService_1.telegramService.notifyDeadlineAlert(task.assignee, task, task.project, diffHours);
-                    if (sent)
-                        notificationsSent++;
-                }
-                alertResults.push({
-                    taskId: task.id,
-                    taskTitle: task.title,
-                    assignee: task.assignee.name,
-                    phone: task.assignee.phone,
-                    telegramId: task.assignee.telegramId,
-                    hoursRemaining: Math.round(diffHours),
-                });
+        catch (error) {
+            console.error("Project create error:", error);
+            // Do not leave a half-made project behind
+            if (createdProjectId !== null) {
+                await data_source_1.AppDataSource.getRepository(Project_1.Project)
+                    .delete(createdProjectId)
+                    .catch(() => undefined);
             }
+            res.status(500).json({ error: error.message });
         }
-        res.json({
-            message: `Scanned tasks. Sent ${notificationsSent} Telegram deadline alerts.`,
-            notificationsSent,
-            alertResults,
-        });
     }
-    catch (error) {
-        console.error('Check deadlines error:', error);
-        res.status(500).json({ error: 'Internal server error' });
+    static async list(req, res) {
+        try {
+            const orgId = req.user.orgId;
+            const page = parseInt(req.query.page || "1", 10);
+            const limit = parseInt(req.query.limit || "10", 10);
+            const skip = (page - 1) * limit;
+            const projectRepo = data_source_1.AppDataSource.getRepository(Project_1.Project);
+            const [projects, total] = await projectRepo.findAndCount({
+                where: { orgId },
+                skip,
+                take: limit,
+                order: { createdAt: "DESC" },
+                relations: ["tasks", "tasks.assignee", "repositories"],
+            });
+            res.json({
+                data: projects.map(withSafeAssignees),
+                pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
+            });
+        }
+        catch (error) {
+            console.error("Project list error:", error);
+            res.status(500).json({ error: error.message });
+        }
     }
-};
-exports.checkProjectDeadlines = checkProjectDeadlines;
+    static async getById(req, res) {
+        try {
+            const orgId = req.user.orgId;
+            const projectId = parseInt(req.params.id, 10);
+            const projectRepo = data_source_1.AppDataSource.getRepository(Project_1.Project);
+            const project = await projectRepo.findOne({
+                where: { id: projectId, orgId },
+                relations: ["teams", "milestones", "repositories", "policies", "tasks", "tasks.assignee"],
+            });
+            if (!project) {
+                res.status(404).json({ error: "Project not found" });
+                return;
+            }
+            res.json(withSafeAssignees(project));
+        }
+        catch (error) {
+            console.error("Project getById error:", error);
+            res.status(500).json({ error: error.message });
+        }
+    }
+    static async update(req, res) {
+        try {
+            const user = req.user;
+            if (!user || !ProjectController.canManageProjects(user.role)) {
+                res.status(403).json({ error: "Access denied." });
+                return;
+            }
+            const orgId = user.orgId;
+            const projectId = parseInt(req.params.id, 10);
+            const { name, description, updateIntervalDays, status, statusReason, techStack } = req.body;
+            const projectRepo = data_source_1.AppDataSource.getRepository(Project_1.Project);
+            const project = await projectRepo.findOne({ where: { id: projectId, orgId } });
+            if (!project) {
+                res.status(404).json({ error: "Project not found" });
+                return;
+            }
+            if (name)
+                project.name = name;
+            if (description)
+                project.description = description;
+            if (updateIntervalDays)
+                project.updateIntervalDays = updateIntervalDays;
+            if (techStack !== undefined)
+                project.techStack = String(techStack || "").trim() || null;
+            if (status) {
+                const allowed = Object.values(Project_1.ProjectStatus);
+                if (!allowed.includes(status)) {
+                    res.status(400).json({ error: `Status must be one of: ${allowed.join(", ")}` });
+                    return;
+                }
+                if (status !== project.status && !String(statusReason || "").trim()) {
+                    res.status(400).json({ error: "Give a reason when you change the project status." });
+                    return;
+                }
+                project.status = status;
+                project.statusReason = String(statusReason || "").trim() || null;
+            }
+            await projectRepo.save(project);
+            await AuditService_1.AuditService.log(orgId, user.id, "UPDATE", "Project", project.id, `Updated project ${project.id}`);
+            res.json(project);
+        }
+        catch (error) {
+            console.error("Project update error:", error);
+            res.status(500).json({ error: error.message });
+        }
+    }
+    static async delete(req, res) {
+        try {
+            const user = req.user;
+            if (!user || String(user.role) !== "ADMIN") {
+                res.status(403).json({ error: "Access denied. Only Admins can delete projects." });
+                return;
+            }
+            const orgId = user.orgId;
+            const projectId = parseInt(req.params.id, 10);
+            const projectRepo = data_source_1.AppDataSource.getRepository(Project_1.Project);
+            const project = await projectRepo.findOne({ where: { id: projectId, orgId } });
+            if (!project) {
+                res.status(404).json({ error: "Project not found" });
+                return;
+            }
+            await projectRepo.remove(project);
+            await AuditService_1.AuditService.log(orgId, user.id, "DELETE", "Project", projectId, `Deleted project ${projectId}`);
+            res.json({ message: "Project deleted successfully" });
+        }
+        catch (error) {
+            console.error("Project delete error:", error);
+            res.status(500).json({ error: error.message });
+        }
+    }
+}
+exports.ProjectController = ProjectController;

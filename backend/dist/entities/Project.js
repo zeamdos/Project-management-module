@@ -9,28 +9,22 @@ var __metadata = (this && this.__metadata) || function (k, v) {
     if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.Project = exports.ProjectHealth = exports.ProjectStatus = void 0;
+exports.Project = exports.ProjectStatus = void 0;
 const typeorm_1 = require("typeorm");
 const Organization_1 = require("./Organization");
-const Milestone_1 = require("./Milestone");
 const Team_1 = require("./Team");
 const Task_1 = require("./Task");
+const Milestone_1 = require("./Milestone");
 const Repository_1 = require("./Repository");
-const ProgressUpdate_1 = require("./ProgressUpdate");
+const Policy_1 = require("./Policy");
 var ProjectStatus;
 (function (ProjectStatus) {
-    ProjectStatus["PLANNING"] = "planning";
-    ProjectStatus["ACTIVE"] = "active";
-    ProjectStatus["ON_HOLD"] = "on_hold";
-    ProjectStatus["COMPLETED"] = "completed";
-    ProjectStatus["CANCELLED"] = "cancelled";
+    ProjectStatus["DRAFT"] = "DRAFT";
+    ProjectStatus["ACTIVE"] = "ACTIVE";
+    ProjectStatus["ON_HOLD"] = "ON_HOLD";
+    ProjectStatus["ARCHIVED"] = "ARCHIVED";
+    ProjectStatus["COMPLETED"] = "COMPLETED";
 })(ProjectStatus || (exports.ProjectStatus = ProjectStatus = {}));
-var ProjectHealth;
-(function (ProjectHealth) {
-    ProjectHealth["ON_TRACK"] = "on_track";
-    ProjectHealth["AT_RISK"] = "at_risk";
-    ProjectHealth["CRITICAL"] = "critical";
-})(ProjectHealth || (exports.ProjectHealth = ProjectHealth = {}));
 let Project = class Project {
 };
 exports.Project = Project;
@@ -39,58 +33,50 @@ __decorate([
     __metadata("design:type", Number)
 ], Project.prototype, "id", void 0);
 __decorate([
-    (0, typeorm_1.Column)({ type: 'int' }),
+    (0, typeorm_1.Column)(),
     __metadata("design:type", Number)
 ], Project.prototype, "orgId", void 0);
 __decorate([
-    (0, typeorm_1.ManyToOne)(() => Organization_1.Organization, organization => organization.projects),
-    (0, typeorm_1.JoinColumn)({ name: 'org_id' }),
+    (0, typeorm_1.ManyToOne)(() => Organization_1.Organization, (org) => org.projects, { onDelete: "CASCADE" }),
+    (0, typeorm_1.JoinColumn)({ name: "org_id" }),
     __metadata("design:type", Organization_1.Organization)
 ], Project.prototype, "organization", void 0);
 __decorate([
-    (0, typeorm_1.Column)({ type: 'varchar', length: 255 }),
+    (0, typeorm_1.Column)(),
     __metadata("design:type", String)
-], Project.prototype, "title", void 0);
+], Project.prototype, "name", void 0);
 __decorate([
-    (0, typeorm_1.Column)({ type: 'text', nullable: true }),
+    (0, typeorm_1.Column)({ type: "text" }),
     __metadata("design:type", String)
 ], Project.prototype, "description", void 0);
 __decorate([
-    (0, typeorm_1.Column)({ type: 'text', nullable: true }),
-    __metadata("design:type", String)
-], Project.prototype, "goals", void 0);
-__decorate([
-    (0, typeorm_1.Column)({ type: 'simple-json', nullable: true }),
-    __metadata("design:type", Object)
-], Project.prototype, "techStack", void 0);
-__decorate([
-    (0, typeorm_1.Column)({ type: 'date', nullable: true }),
-    __metadata("design:type", Object)
-], Project.prototype, "startDate", void 0);
-__decorate([
-    (0, typeorm_1.Column)({ type: 'date', nullable: true }),
-    __metadata("design:type", Object)
-], Project.prototype, "deadline", void 0);
-__decorate([
-    (0, typeorm_1.Column)({ type: 'int', default: 7 }),
-    __metadata("design:type", Number)
-], Project.prototype, "updateIntervalDays", void 0);
-__decorate([
     (0, typeorm_1.Column)({
-        type: 'varchar', length: 50,
+        type: "enum",
         enum: ProjectStatus,
-        default: ProjectStatus.PLANNING
+        default: ProjectStatus.ACTIVE,
     }),
     __metadata("design:type", String)
 ], Project.prototype, "status", void 0);
 __decorate([
-    (0, typeorm_1.Column)({
-        type: 'varchar', length: 50,
-        enum: ProjectHealth,
-        default: ProjectHealth.ON_TRACK
-    }),
-    __metadata("design:type", String)
-], Project.prototype, "health", void 0);
+    (0, typeorm_1.Column)({ type: "varchar", nullable: true }),
+    __metadata("design:type", Object)
+], Project.prototype, "techStack", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: "text", nullable: true }),
+    __metadata("design:type", Object)
+], Project.prototype, "statusReason", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ default: 7 }),
+    __metadata("design:type", Number)
+], Project.prototype, "updateIntervalDays", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: "timestamp", nullable: true }),
+    __metadata("design:type", Object)
+], Project.prototype, "deadline", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: "text", nullable: true }),
+    __metadata("design:type", Object)
+], Project.prototype, "requirements", void 0);
 __decorate([
     (0, typeorm_1.CreateDateColumn)(),
     __metadata("design:type", Date)
@@ -100,25 +86,25 @@ __decorate([
     __metadata("design:type", Date)
 ], Project.prototype, "updatedAt", void 0);
 __decorate([
-    (0, typeorm_1.OneToMany)(() => Milestone_1.Milestone, milestone => milestone.project),
-    __metadata("design:type", Array)
-], Project.prototype, "milestones", void 0);
-__decorate([
-    (0, typeorm_1.OneToMany)(() => Team_1.Team, team => team.project),
+    (0, typeorm_1.OneToMany)(() => Team_1.Team, (team) => team.project, { cascade: true }),
     __metadata("design:type", Array)
 ], Project.prototype, "teams", void 0);
 __decorate([
-    (0, typeorm_1.OneToMany)(() => Task_1.Task, task => task.project),
+    (0, typeorm_1.OneToMany)(() => Task_1.Task, (task) => task.project, { cascade: true }),
     __metadata("design:type", Array)
 ], Project.prototype, "tasks", void 0);
 __decorate([
-    (0, typeorm_1.OneToMany)(() => Repository_1.Repository, repository => repository.project),
+    (0, typeorm_1.OneToMany)(() => Milestone_1.Milestone, (milestone) => milestone.project, { cascade: true }),
+    __metadata("design:type", Array)
+], Project.prototype, "milestones", void 0);
+__decorate([
+    (0, typeorm_1.OneToMany)(() => Repository_1.Repository, (repo) => repo.project, { cascade: true }),
     __metadata("design:type", Array)
 ], Project.prototype, "repositories", void 0);
 __decorate([
-    (0, typeorm_1.OneToMany)(() => ProgressUpdate_1.ProgressUpdate, progressUpdate => progressUpdate.project),
+    (0, typeorm_1.OneToMany)(() => Policy_1.Policy, (policy) => policy.project, { cascade: true }),
     __metadata("design:type", Array)
-], Project.prototype, "progressUpdates", void 0);
+], Project.prototype, "policies", void 0);
 exports.Project = Project = __decorate([
-    (0, typeorm_1.Entity)('project')
+    (0, typeorm_1.Entity)("projects")
 ], Project);
