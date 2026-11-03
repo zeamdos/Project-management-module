@@ -15,12 +15,14 @@ export type ProjectBrief = {
   repoUrl: string | null;
 };
 
-// Task.requiredRole -> User.specialty (compared in lower case)
-const ROLE_TO_SPECIALTY: Record<TaskRole, string> = {
-  [TaskRole.FRONTEND]: "frontend",
-  [TaskRole.BACKEND]: "backend",
-  [TaskRole.UI_UX]: "ui/ux",
-  [TaskRole.AI]: "ai",
+// Maps whatever is typed in User.specialty ("Frontend Developer", "front-end", "UI/UX Designer", "AI/ML"...) to a team.
+const specialtyToRole = (s?: string | null): TaskRole | null => {
+  const t = (s || "").toLowerCase();
+  if (/\b(ui|ux)\b|ui\/ux|design|figma/.test(t)) return TaskRole.UI_UX;
+  if (/front|react|vue|angular/.test(t)) return TaskRole.FRONTEND;
+  if (/back|node|api|database|server|sql/.test(t)) return TaskRole.BACKEND;
+  if (/\bai\b|\bml\b|machine|nlp|llm|data scien/.test(t)) return TaskRole.AI;
+  return null;
 };
 
 // One piece of a team's work. Every developer in the team gets one or more of these.
@@ -297,8 +299,13 @@ export class AITaskService {
     projectId: number,
     description: string,
     orgId: number,
-    brief?: Partial<ProjectBrief>
+    brief?: Partial<ProjectBrief>,
+    pmId?: number
   ): Promise<Task[]> {
+    if (!Number.isInteger(pmId) || (pmId as number) <= 0) {
+      throw new Error("A valid Project Manager ID is required to generate and assign project tasks.");
+    }
+
     const info: ProjectBrief = {
       name: brief?.name || "Project",
       deadline: brief?.deadline ?? null,
@@ -310,7 +317,7 @@ export class AITaskService {
     if (apiKey && apiKey.startsWith("sk-")) {
       try {
         console.log(`[AITaskService] Decomposing project #${projectId} using OpenAI...`);
-        const aiTasks = await this.decomposeWithOpenAI(projectId, description, orgId, info);
+        const aiTasks = await this.decomposeWithOpenAI(projectId, description, orgId, info, pmId);
         if (aiTasks && aiTasks.length > 0) {
           console.log(`[AITaskService] Successfully decomposed project #${projectId} into ${aiTasks.length} AI-generated tasks.`);
           return aiTasks;
@@ -320,233 +327,156 @@ export class AITaskService {
       }
     }
 
-    return this.processWithHeuristics(projectId, description, orgId, info);
+    return this.processWithHeuristics(projectId, description, orgId, info, pmId);
   }
 
   /**
-   * Real AI Task Decomposition using OpenAI API
+   * The AI only WRITES the work areas for each team (specific to this project).
+   * The server does the DIVIDING: every developer of this PM gets their own area.
    */
   private static async decomposeWithOpenAI(
     projectId: number,
     description: string,
     orgId: number,
-    info: ProjectBrief
+    info: ProjectBrief,
+    pmId?: number
   ): Promise<Task[] | null> {
     const apiKey = process.env.OPENAI_API_KEY?.trim();
-    if (!apiKey) return null;
+    if (!apiKey || !pmId) return null;
 
-    const userRepo = AppDataSource.getRepository(User);
-    const taskRepo = AppDataSource.getRepository(Task);
-    const teamRepo = AppDataSource.getRepository(Team);
+    // Head-count per team, from this PM's own active developers only.
+    const staffed: { cfg: RoleConfig; count: number; wanted: number }[] = [];
+    for (const cfg of ROLES) {
+      const devs = await this.developersFor(orgId, cfg.role, pmId);
+      if (devs.length > 0) staffed.push({ cfg, count: devs.length, wanted: Math.min(8, Math.max(devs.length, 3)) });
+    }
+    // No team yet: the normal path creates the unassigned tasks so the PM can see them.
+    if (staffed.length === 0) return null;
 
-    const allDevs = await userRepo.find({
-      where: { orgId, role: UserRole.DEVELOPER, status: UserStatus.ACTIVE },
-    });
+    const roster = staffed
+      .map((s) => `- ${s.cfg.team}: ${s.count} developer(s) -> write EXACTLY ${s.wanted} work areas`)
+      .join("\n");
 
-    const devProfiles = await Promise.all(
-      allDevs.map(async (d) => {
-        const activeTasks = await taskRepo.count({
-          where: { assigneeId: d.id, status: Not(TaskStatus.DONE) },
-        });
-        return {
-          id: d.id,
-          name: d.name,
-          email: d.email,
-          specialty: (d.specialty || "frontend").toLowerCase(),
-          activeTasks,
-        };
-      })
-    );
-
-    const openai = new OpenAI({ apiKey });
-
-    const systemPrompt = `You are a Principal Technical Architect & Engineering Manager in an enterprise software organization.
-Decompose project briefs into granular, enterprise-ready technical tasks for developers across disciplines (frontend, backend, ui/ux, ai).
-Distribute tasks across available developers by matching technical specialty and balancing active workload.
-Output valid JSON only.`;
-
-    const userPrompt = `Decompose this enterprise software project into discrete engineering tasks:
-
-PROJECT NAME: ${info.name}
-DESCRIPTION: ${description}
-REQUIREMENTS: ${info.requirements || "Standard enterprise requirements (clean architecture, unit tests, responsive UI, secure APIs)"}
-TARGET DEADLINE: ${info.deadline ? info.deadline.toISOString().slice(0, 10) : "Not specified"}
-REPOSITORY: ${info.repoUrl || "Enterprise repo"}
-
-ACTIVE DEVELOPERS IN ORGANIZATION:
-${JSON.stringify(devProfiles, null, 2)}
-
-TASK SPECIFICATION RULES:
-1. Break down into discrete tasks across required roles ("frontend", "backend", "ui/ux", "ai").
-2. For each task, select the optimal developer ID from the active developers based on specialty match and lower activeTasks count. If no developer fits, set suggestedAssigneeId to null.
-3. For each task, specify:
-   - "team": Name of the team (e.g. "Frontend", "Backend", "UI/UX", "AI")
-   - "role": "frontend" | "backend" | "ui/ux" | "ai"
-   - "title": Specific, actionable task title (e.g. "Implement JWT Auth & RBAC Middleware")
-   - "goal": 1-2 sentences on high-level business/technical goal
-   - "suggestedAssigneeId": Number (developer ID) or null
-   - "timelineShare": Float between 0.3 and 0.9 (fraction of project duration when this task is due; e.g. UI/UX 0.35, Backend 0.7, Frontend 0.85)
-   - "areas": Array of 1-3 work areas, each with:
-     - "title": Name of work area
-     - "steps": Array of 3-5 clear, sequential implementation steps
-     - "handIn": Array of concrete deliverables (e.g. PR link, unit tests, schema migrations)
-     - "doneWhen": Array of measurable acceptance criteria
-
-Respond with a JSON object:
-{
-  "tasks": [ ... ]
-}`;
-
-    const completion = await openai.chat.completions.create({
+    const completion = await new OpenAI({ apiKey }).chat.completions.create({
       model: "gpt-4o-mini",
-      messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: userPrompt },
-      ],
       response_format: { type: "json_object" },
       temperature: 0.2,
+      messages: [
+        {
+          role: "system",
+          content:
+            "You are an engineering manager. You split a software project into work areas for each team. Output valid JSON only.",
+        },
+        {
+          role: "user",
+          content: `PROJECT NAME: ${info.name}
+DESCRIPTION: ${description}
+REQUIREMENTS: ${info.requirements || "none given"}
+DEADLINE: ${info.deadline ? day(info.deadline) : "not set"}
+
+TEAMS AND HEAD-COUNT (only these teams exist):
+${roster}
+
+RULES:
+1. For each team write exactly the number of work areas listed. Areas must NOT overlap: each is a different piece of THIS project that one developer can own alone.
+2. Use the real features and names from the description. Do not write generic text.
+3. Each area has: "title", "steps" (3-5 short sequential steps), "handIn" (what to deliver), "doneWhen" (how to check it is finished).
+4. Do not assign people and do not add other teams.
+
+Return JSON:
+{"teams":[{"team":"<team name from the list>","goal":"<1-2 sentences>","areas":[{"title":"","steps":[""],"handIn":[""],"doneWhen":[""]}]}]}`,
+        },
+      ],
     });
 
-    const rawContent = completion.choices[0]?.message?.content;
-    if (!rawContent) return null;
+    const raw = completion.choices[0]?.message?.content;
+    if (!raw) return null;
+    const specs: any[] = JSON.parse(raw).teams;
+    if (!Array.isArray(specs)) return null;
 
-    const parsed = JSON.parse(rawContent);
-    const taskSpecs: any[] = parsed.tasks || parsed.items || [];
-    if (!Array.isArray(taskSpecs) || taskSpecs.length === 0) return null;
+    const str = (v: unknown, max: number) => (typeof v === "string" ? v.trim().slice(0, max) : "");
+    const list = (v: unknown) => (Array.isArray(v) ? v.map((x) => str(x, 300)).filter(Boolean).slice(0, 6) : []);
 
-    const created: Task[] = [];
-    const teamMap = new Map<string, Team>();
+    const byRole = new Map<TaskRole, RoleConfig>();
+    for (const s of staffed) {
+      const spec = specs.find((t) => str(t?.team, 50).toLowerCase() === s.cfg.team.toLowerCase());
+      const areas: Area[] = (Array.isArray(spec?.areas) ? spec.areas : [])
+        .map((a: any) => ({
+          title: str(a?.title, 120),
+          steps: list(a?.steps),
+          handIn: list(a?.handIn),
+          doneWhen: list(a?.doneWhen),
+        }))
+        .filter((a: Area) => a.title && a.steps.length > 0)
+        .slice(0, s.wanted);
 
-    for (const spec of taskSpecs) {
-      const teamName = spec.team || (spec.role ? String(spec.role).toUpperCase() : "Engineering");
-      const share = typeof spec.timelineShare === "number" ? spec.timelineShare : 0.8;
-      const due = this.teamDeadline(info.deadline, share);
-
-      let team = teamMap.get(teamName);
-      if (!team) {
-        let existingTeam = await teamRepo.findOne({ where: { orgId, projectId, name: teamName } });
-        if (!existingTeam) {
-          existingTeam = await teamRepo.save(teamRepo.create({ orgId, projectId, name: teamName, deadline: due }));
-        }
-        team = existingTeam;
-        teamMap.set(teamName, team);
+      // If the AI gave too few areas, fill up from the built-in ones so nobody is left without work.
+      for (const t of s.cfg.areas) {
+        if (areas.length >= s.wanted) break;
+        if (!areas.some((a) => a.title.toLowerCase() === t.title.toLowerCase())) areas.push(t);
       }
 
-      // Map role to TaskRole enum
-      let taskRole = TaskRole.FRONTEND;
-      const roleStr = String(spec.role || "").toLowerCase();
-      if (roleStr.includes("back")) taskRole = TaskRole.BACKEND;
-      else if (roleStr.includes("ui") || roleStr.includes("ux") || roleStr.includes("design")) taskRole = TaskRole.UI_UX;
-      else if (roleStr.includes("ai") || roleStr.includes("ml")) taskRole = TaskRole.AI;
-
-      // Assignee resolution
-      let assignedDev: User | null = null;
-      if (spec.suggestedAssigneeId) {
-        assignedDev = allDevs.find((d) => d.id === spec.suggestedAssigneeId) || null;
-      }
-      if (!assignedDev) {
-        // Fallback to least busy dev of this specialty
-        const matchingDevs = await this.developersFor(orgId, taskRole);
-        assignedDev = matchingDevs[0] || null;
-      }
-
-      const task = new Task();
-      task.projectId = projectId;
-      task.project = { id: projectId } as Project;
-      task.teamId = team.id;
-      task.team = team;
-      task.title = spec.title || `${teamName} Task`;
-      task.requiredRole = taskRole;
-      task.assigneeId = assignedDev ? assignedDev.id : null;
-      task.assignee = assignedDev ? assignedDev : null;
-      task.deadline = due;
-      task.status = assignedDev ? TaskStatus.TODO : TaskStatus.PENDING;
-      await taskRepo.save(task);
-
-      // Build structured brief
-      const briefLines: string[] = [];
-      briefLines.push("GOAL", spec.goal || "Complete technical requirements for this module.", "");
-
-      if (assignedDev) {
-        briefLines.push(`ASSIGNED DEVELOPER: ${assignedDev.name} (${assignedDev.email})`, `SPECIALTY: ${assignedDev.specialty || "Engineering"}`, "");
-      }
-
-      briefLines.push("FROM THE PM SPECIFICATION", `- ${description}`, "");
-      if (info.requirements) briefLines.push(`Extra requirements: ${info.requirements}`, "");
-
-      if (Array.isArray(spec.areas)) {
-        briefLines.push("IMPLEMENTATION BREAKDOWN");
-        spec.areas.forEach((area: any, ai: number) => {
-          briefLines.push(`Area ${ai + 1}: ${area.title || "Core Scope"}`);
-          if (Array.isArray(area.steps)) {
-            area.steps.forEach((s: string, si: number) => briefLines.push(`${si + 1}. ${s}`));
-          }
-          briefLines.push("");
-        });
-
-        const allHandIn = spec.areas.flatMap((a: any) => (Array.isArray(a.handIn) ? a.handIn : []));
-        if (allHandIn.length > 0) {
-          briefLines.push("WHAT TO HAND IN", ...allHandIn.map((h: string) => `- ${h}`), "");
-        }
-
-        const allDoneWhen = spec.areas.flatMap((a: any) => (Array.isArray(a.doneWhen) ? a.doneWhen : []));
-        if (allDoneWhen.length > 0) {
-          briefLines.push("ACCEPTANCE CRITERIA / DONE WHEN", ...allDoneWhen.map((d: string) => `- ${d}`), "");
-        }
-      }
-
-      briefLines.push(
-        "DEADLINE",
-        due
-          ? `Your milestone deadline is ${day(due)}.${info.deadline ? ` Final project delivery is ${day(info.deadline)}.` : ""}`
-          : "No strict milestone deadline set.",
-        ""
-      );
-
-      const branch = `${slug(teamName)}/task-${task.id}`;
-      briefLines.push(
-        "ENTERPRISE GIT WORKFLOW",
-        `1. Repository: ${info.repoUrl ?? "Pending repository link from PM"}`,
-        `2. Working branch: git checkout -b ${branch}`,
-        `3. Commit standard: Include "#${task.id}" in every commit message (e.g. "feat(core): implement endpoints #${task.id}")`,
-        `4. Pull Request: Open PR to main branch titled "[TASK-${task.id}] ${task.title}"`,
-        "5. Peer Review: Once tests pass and PR is opened, change task status to 'In Review' on your developer station."
-      );
-
-      const fullDescription = briefLines.join("\n");
-      await taskRepo.update(task.id, { description: fullDescription });
-      task.description = fullDescription;
-
-      created.push(task);
-      if (assignedDev) {
-        const roleCfg = ROLES.find((r) => r.role === taskRole) || ROLES[0];
-        await this.notifyAssignee(assignedDev, task, roleCfg, info, due);
-      }
+      byRole.set(s.cfg.role, { ...s.cfg, goal: str(spec?.goal, 300) || s.cfg.goal, areas });
     }
 
-    return created;
+    const configs = ROLES.map((cfg) => byRole.get(cfg.role) ?? cfg);
+    return this.createTasks(projectId, description, orgId, info, pmId, configs);
   }
 
   /**
-   * Splits a project by team using heuristic role templates.
+   * Fallback without AI: uses the built-in work areas for each team.
    */
   private static async processWithHeuristics(
     projectId: number,
     description: string,
     orgId: number,
-    info: ProjectBrief
+    info: ProjectBrief,
+    pmId?: number
+  ): Promise<Task[]> {
+    return this.createTasks(projectId, description, orgId, info, pmId as number, ROLES);
+  }
+
+  /**
+   * Shared by the AI path and the fallback path. Splits each team's work between the PM's developers.
+   * - Teams with developers on this PM's team always get tasks.
+   * - A team with nobody gets an unassigned task only if the PM's text mentions it (so the PM sees the gap).
+   * - If the PM has no developers at all, every team gets an unassigned task (old behaviour).
+   */
+  private static async createTasks(
+    projectId: number,
+    description: string,
+    orgId: number,
+    info: ProjectBrief,
+    pmId: number,
+    configs: RoleConfig[]
   ): Promise<Task[]> {
     const taskRepo = AppDataSource.getRepository(Task);
     const teamRepo = AppDataSource.getRepository(Team);
     const created: Task[] = [];
 
-    for (const cfg of this.pickRoles(`${description}. ${info.requirements || ""}`)) {
-      const developers = await this.developersFor(orgId, cfg.role);
+    const devsByRole = new Map<TaskRole, User[]>();
+    let totalDevs = 0;
+    for (const cfg of configs) {
+      const devs = await this.developersFor(orgId, cfg.role, pmId);
+      devsByRole.set(cfg.role, devs);
+      totalDevs += devs.length;
+    }
+
+    const mentioned = new Set(this.pickRoles(`${info.name} ${description} ${info.requirements ?? ""}`).map((r) => r.role));
+    const active = configs.filter(
+      (cfg) => totalDevs === 0 || (devsByRole.get(cfg.role) ?? []).length > 0 || mentioned.has(cfg.role)
+    );
+
+    for (const cfg of active) {
+      const developers = devsByRole.get(cfg.role) ?? [];
       const parts = this.planParts(cfg, developers.length);
       const people: (User | null)[] = parts.map((_, i) => developers[i] ?? null);
       const due = this.teamDeadline(info.deadline, cfg.share);
 
-      const team = await teamRepo.save(teamRepo.create({ orgId, projectId, name: cfg.team, deadline: due }));
+      let team = await teamRepo.findOne({ where: { orgId, projectId, name: cfg.team } });
+      if (!team) {
+        team = await teamRepo.save(teamRepo.create({ orgId, projectId, name: cfg.team, deadline: due }));
+      }
 
       for (let i = 0; i < parts.length; i++) {
         const developer = people[i];
@@ -576,7 +506,6 @@ Respond with a JSON object:
 
     return created;
   }
-
 
   // Teams named in the text. If none is recognised, give the project a frontend and a backend team.
   private static pickRoles(text: string): RoleConfig[] {
@@ -697,24 +626,36 @@ Respond with a JSON object:
     return lines.join("\n");
   }
 
-  // Every active developer of that specialty, least busy first.
-  private static async developersFor(orgId: number, role: TaskRole): Promise<User[]> {
+  // Only active developers explicitly assigned to this PM can receive this PM's work.
+  private static async developersFor(orgId: number, role: TaskRole, pmId?: number): Promise<User[]> {
+    if (!pmId) return [];
+
     const userRepo = AppDataSource.getRepository(User);
     const taskRepo = AppDataSource.getRepository(Task);
-
-    const all = await userRepo.find({
-      where: { orgId, role: UserRole.DEVELOPER, status: UserStatus.ACTIVE },
+    const members = await userRepo.find({
+      where: {
+        orgId,
+        assignedPmId: pmId,
+        role: UserRole.DEVELOPER,
+        status: UserStatus.ACTIVE,
+      },
     });
 
-    const wanted = ROLE_TO_SPECIALTY[role];
-    const members = all.filter((d) => (d.specialty || "").trim().toLowerCase() === wanted);
+    const matching = members.filter((d) => specialtyToRole(d.specialty) === role);
 
     const loads = new Map<number, number>();
-    for (const m of members) {
-      loads.set(m.id, await taskRepo.count({ where: { assigneeId: m.id, status: Not(TaskStatus.DONE) } }));
+    for (const member of matching) {
+      loads.set(
+        member.id,
+        await taskRepo.count({
+          where: { assigneeId: member.id, status: Not(TaskStatus.DONE) },
+        })
+      );
     }
 
-    return members.sort((a, b) => (loads.get(a.id)! - loads.get(b.id)!) || a.id - b.id);
+    return matching.sort(
+      (a, b) => (loads.get(a.id)! - loads.get(b.id)!) || a.id - b.id
+    );
   }
 
   private static async notifyAssignee(dev: User, task: Task, cfg: RoleConfig, info: ProjectBrief, due: Date | null): Promise<void> {
@@ -726,7 +667,7 @@ Respond with a JSON object:
         `Repository: ${info.repoUrl ?? "ask your PM"}\n` +
         `Your branch: ${slug(cfg.team)}/task-${task.id}\n\n` +
         `Open your dashboard for the full step-by-step plan. Put TASK-${task.id} in every commit message and pull request title.`;
-      await NotificationService.notifyUser(dev, text, "TASK_ASSIGNED");
+      await NotificationService.notifyUser(dev, text, "TASK_ASSIGNED", true);
     } catch (err: any) {
       console.error("Could not notify assignee:", err?.message || err);
     }
