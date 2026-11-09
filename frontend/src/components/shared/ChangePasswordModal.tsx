@@ -50,8 +50,8 @@ export const ChangePasswordModal: React.FC = () => {
 
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 p-4 backdrop-blur-md">
-      <div className="w-full max-w-lg rounded-2xl border border-[#333] bg-[#141414] p-8 shadow-2xl space-y-6">
+    <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/85 p-4 pt-6 backdrop-blur-md overflow-y-auto">
+      <div className="w-full max-w-lg rounded-2xl border border-[#333] bg-[#141414] p-8 shadow-2xl space-y-6 max-h-[90vh] overflow-y-auto my-auto">
         <div className="flex items-center gap-3 border-b border-[#242424] pb-5">
           <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-amber-950/40 border border-amber-900/60 text-amber-300">
             <Lock size={20} />

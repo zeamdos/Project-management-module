@@ -7,7 +7,7 @@ import { addAuditLog } from "../../services/mockDataStore";
 
 interface CreateProjectModalProps {
   onClose: () => void;
-  onProjectCreated: (newProject: Project) => void;
+  onProjectCreated: (newProject: Project, newTasks?: any[]) => void;
 }
 
 export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
@@ -55,7 +55,7 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
         addAuditLog(user, "PROJECT_CREATED", "Project", created.id, `Created project "${created.name}"`);
       }
 
-      onProjectCreated(created);
+      onProjectCreated(created, res.data?.tasks);
       onClose();
     } catch (err: any) {
       // If backend offline, create local project cleanly
@@ -83,7 +83,7 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm">
+    <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/80 p-4 pt-6 backdrop-blur-sm overflow-y-auto">
       <div className="w-full max-w-lg rounded-2xl border border-[#333] bg-[#141414] p-6 shadow-2xl space-y-5">
         <div className="flex items-center justify-between border-b border-[#262626] pb-4">
           <div className="flex items-center gap-3">

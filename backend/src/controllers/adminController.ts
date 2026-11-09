@@ -3,6 +3,8 @@ import { AppDataSource } from "../config/data-source";
 import { AuthRequest } from "../middleware/auth";
 import { User, UserRole, UserStatus } from "../entities/User";
 import { Organization } from "../entities/Organization";
+import { Skill } from "../entities/Skill";
+import { UserSkill } from "../entities/UserSkill";
 import { AuditService } from "../services/AuditService";
 import { NotificationService } from "../services/NotificationService";
 import bcrypt from "bcryptjs";
@@ -41,10 +43,15 @@ function sanitizeUser(u: User) {
     name: u.name,
     email: u.email,
     role: u.role,
+    department: u.department,
+    team: u.team,
     specialty: u.specialty,
+    assignedPmId: u.assignedPmId,
     status: u.status,
     githubUsername: u.githubUsername,
     phoneNumber: u.phoneNumber,
+    telegramChatId: u.telegramChatId,
+    telegramLinked: !!u.telegramChatId,
     notifyInApp: u.notifyInApp,
     notifyTelegram: u.notifyTelegram,
     notifyEmail: u.notifyEmail,
@@ -72,7 +79,7 @@ export class AdminController {
   // POST /api/admin/users  — provision a new account (Admin only)
   static async createUser(req: AuthRequest, res: Response): Promise<void> {
     try {
-      const { name, email, role, specialty, githubUsername, phoneNumber, department } = req.body;
+      const { name, email, role, specialty, githubUsername, phoneNumber, department, team, assignedPmId, skills } = req.body;
 
       if (!name || !email || !role) {
         res.status(400).json({ error: "name, email and role are required." });
@@ -100,20 +107,55 @@ export class AdminController {
       const tempPassword = generateTempPassword();
       const passwordHash = await bcrypt.hash(tempPassword, 12);
 
-      const userRepo = AppDataSource.getRepository(User);
-      const newUser = userRepo.create({
-        orgId: org.id,
-        name: String(name).trim(),
-        email: normalizedEmail,
-        passwordHash,
-        role: role as UserRole,
-        status: UserStatus.ACTIVE,
-        specialty: specialty || null,
-        githubUsername: githubUsername || null,
-        phoneNumber: phoneNumber || null,
-      });
+      // Handle skills in a transaction
+      const newUser = await AppDataSource.transaction(async (manager) => {
+        const userRepo = manager.getRepository(User);
+        const skillRepo = manager.getRepository(Skill);
+        const userSkillRepo = manager.getRepository(UserSkill);
 
-      await userRepo.save(newUser);
+        const created = userRepo.create({
+          orgId: org.id,
+          name: String(name).trim(),
+          email: normalizedEmail,
+          passwordHash,
+          role: role as UserRole,
+          status: UserStatus.ACTIVE,
+          specialty: specialty || null,
+          assignedPmId: assignedPmId ? Number(assignedPmId) : null,
+          department: department || null,
+          team: team || null,
+          githubUsername: githubUsername || null,
+          phoneNumber: phoneNumber || null,
+        });
+
+        await userRepo.save(created);
+
+        // Add skills if provided
+        if (Array.isArray(skills) && skills.length > 0) {
+          const skillNames = Array.from(new Set(skills.map((s: any) => String(s).trim()).filter(Boolean)));
+
+          for (const skillName of skillNames) {
+            let skill = await skillRepo.findOne({ where: { name: skillName, orgId: org.id } });
+            if (!skill) {
+              skill = skillRepo.create({ name: skillName, orgId: org.id });
+              await skillRepo.save(skill);
+            }
+
+            const existingLink = await userSkillRepo.findOne({
+              where: { userId: created.id, skillId: skill.id }
+            });
+            if (!existingLink) {
+              await userSkillRepo.save({
+                userId: created.id,
+                skillId: skill.id,
+                orgId: org.id
+              });
+            }
+          }
+        }
+
+        return created;
+      });
 
       await AuditService.log(
         org.id,
@@ -131,7 +173,6 @@ export class AdminController {
           `Welcome to NEXUS Enterprise, ${newUser.name}!\n\nYour account has been provisioned by the system administrator.\n\nLogin: ${normalizedEmail}\nTemporary Password: ${tempPassword}\n\nYou will be required to change your password on first sign-in.`,
           "GENERAL"
         );
-
       } catch {
         // Notification failure is non-fatal
       }
@@ -147,7 +188,7 @@ export class AdminController {
     }
   }
 
-  // PATCH /api/admin/users/:id  — update name, role, status, specialty, etc.
+  // PATCH /api/admin/users/:id  — update name, role, status, specialty, assigned PM, etc.
   static async updateUser(req: AuthRequest, res: Response): Promise<void> {
     try {
       const targetId = Number(req.params.id);
@@ -161,7 +202,20 @@ export class AdminController {
         return;
       }
 
-      const { name, role, status, specialty, githubUsername, phoneNumber, notifyInApp, notifyTelegram, notifyEmail } = req.body;
+      const {
+        name,
+        role,
+        status,
+        specialty,
+        assignedPmId,
+        department,
+        team,
+        githubUsername,
+        phoneNumber,
+        notifyInApp,
+        notifyTelegram,
+        notifyEmail,
+      } = req.body;
 
       if (name !== undefined) target.name = String(name).trim();
       if (role !== undefined) {
@@ -190,6 +244,11 @@ export class AdminController {
         target.status = status;
       }
       if (specialty !== undefined) target.specialty = specialty || null;
+      if (assignedPmId !== undefined) {
+        target.assignedPmId = assignedPmId ? Number(assignedPmId) : null;
+      }
+      if (department !== undefined) target.department = department || null;
+      if (team !== undefined) target.team = team || null;
       if (githubUsername !== undefined) target.githubUsername = githubUsername || null;
       if (phoneNumber !== undefined) target.phoneNumber = phoneNumber || null;
       if (notifyInApp !== undefined) target.notifyInApp = Boolean(notifyInApp);
@@ -249,7 +308,6 @@ export class AdminController {
           `Your password for NEXUS Enterprise has been reset by an administrator.\n\nNew temporary password: ${tempPassword}\n\nPlease sign in and change your password immediately.`,
           "GENERAL"
         );
-
       } catch {
         // non-fatal
       }

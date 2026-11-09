@@ -235,7 +235,7 @@ export const TeamsDepartments: React.FC = () => {
 
       {/* Create Team Modal */}
       {showCreateTeamModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm">
+        <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/80 p-4 pt-6 backdrop-blur-sm overflow-y-auto">
           <div className="w-full max-w-md rounded-2xl border border-[#333] bg-[#141414] p-6 shadow-2xl space-y-5">
             <div className="flex items-center justify-between border-b border-[#262626] pb-4">
               <h3 className="text-base font-semibold text-white">Create New Team</h3>
@@ -318,7 +318,7 @@ export const TeamsDepartments: React.FC = () => {
 
       {/* Move User Team Modal */}
       {movingUser && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm">
+        <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/80 p-4 pt-6 backdrop-blur-sm overflow-y-auto">
           <div className="w-full max-w-md rounded-2xl border border-[#333] bg-[#141414] p-6 shadow-2xl space-y-5">
             <div className="flex items-center justify-between border-b border-[#262626] pb-4">
               <h3 className="text-base font-semibold text-white">Reallocate Employee</h3>

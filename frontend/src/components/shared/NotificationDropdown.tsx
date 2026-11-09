@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { AlertCircle, AlertTriangle, Bell, Check, CheckCheck, Clock, ShieldAlert } from "lucide-react";
 import { useAuth } from "../../context/AuthContext";
 import {
@@ -7,6 +7,7 @@ import {
   markNotificationRead,
 } from "../../services/mockDataStore";
 import { NotificationItem } from "../../types";
+import API from "../../services/api";
 
 interface NotificationDropdownProps {
   onSelectTask?: (taskId: number) => void;
@@ -19,15 +20,50 @@ export const NotificationDropdown: React.FC<NotificationDropdownProps> = ({ onSe
     getStoredNotifications(user?.id)
   );
 
-  const refresh = () => {
-    setNotifications(getStoredNotifications(user?.id));
+  const fetchLiveNotifications = () => {
+    API.get("/me/notifications")
+      .then((res) => {
+        if (res.data?.notifications && Array.isArray(res.data.notifications)) {
+          const live: NotificationItem[] = res.data.notifications.map((n: any) => ({
+            id: n.id,
+            userId: user?.id || 0,
+            title: n.kind ? n.kind.replace(/_/g, " ") : "System Notification",
+            message: n.message,
+            kind: n.kind === "BLOCKER" ? "BLOCKER" : n.kind === "REVIEW_PENDING" ? "REVIEW" : "TASK",
+            readAt: n.readAt,
+            createdAt: n.createdAt,
+          }));
+          setNotifications(live);
+        } else {
+          setNotifications(getStoredNotifications(user?.id));
+        }
+      })
+      .catch(() => {
+        setNotifications(getStoredNotifications(user?.id));
+      });
   };
+
+  useEffect(() => {
+    fetchLiveNotifications();
+    // Poll every 30 seconds for live updates
+    const interval = setInterval(fetchLiveNotifications, 30000);
+    return () => clearInterval(interval);
+  }, [user?.id]);
 
   const unreadCount = notifications.filter((n) => !n.readAt).length;
 
-  const handleMarkOne = (id: string | number, link?: string) => {
+  const handleMarkOne = async (id: string | number, link?: string) => {
+    // Try backend first
+    try {
+      await API.post(`/me/notifications/${id}/read`);
+    } catch {
+      // Local fallback
+    }
     markNotificationRead(id);
-    refresh();
+    setNotifications((prev) =>
+      prev.map((n) => (n.id === id ? { ...n, readAt: new Date().toISOString() } : n))
+    );
+
     if (link && link.startsWith("task-") && onSelectTask) {
       const taskId = parseInt(link.replace("task-", ""), 10);
       if (!isNaN(taskId)) {
@@ -37,10 +73,17 @@ export const NotificationDropdown: React.FC<NotificationDropdownProps> = ({ onSe
     }
   };
 
-  const handleMarkAll = () => {
+  const handleMarkAll = async () => {
     if (!user) return;
+    try {
+      await API.post("/me/notifications/read-all");
+    } catch {
+      // Local fallback
+    }
     markAllNotificationsRead(user.id);
-    refresh();
+    setNotifications((prev) =>
+      prev.map((n) => ({ ...n, readAt: n.readAt || new Date().toISOString() }))
+    );
   };
 
   return (
@@ -48,7 +91,7 @@ export const NotificationDropdown: React.FC<NotificationDropdownProps> = ({ onSe
       <button
         onClick={() => {
           setOpen((s) => !s);
-          refresh();
+          fetchLiveNotifications();
         }}
         className="relative rounded-lg p-2 text-[#888] transition hover:bg-[#202020] hover:text-white"
         aria-label="Notifications"

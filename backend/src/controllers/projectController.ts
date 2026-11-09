@@ -100,6 +100,7 @@ export class ProjectController {
 
       const project = projectRepo.create({
         orgId,
+        pmId: user.id,
         name,
         description,
         status: ProjectStatus.ACTIVE,
@@ -124,12 +125,18 @@ export class ProjectController {
       await repoRepo.save(repoRepo.create({ projectId: project.id, url: chosenRepo, webhookSecret: encrypt(secret) }));
 
       // Split into tasks, create teams with deadlines, assign and notify
-      const assignedTasks = await AITaskService.processAndAssignProject(project.id, description, orgId, {
-        name,
-        deadline: parsed.date,
-        requirements: project.requirements,
-        repoUrl: chosenRepo,
-      });
+      const assignedTasks = await AITaskService.processAndAssignProject(
+        project.id,
+        description,
+        orgId,
+        {
+          name,
+          deadline: parsed.date,
+          requirements: project.requirements,
+          repoUrl: chosenRepo,
+        },
+        user.id
+      );
 
       await AuditService.log(
         orgId,

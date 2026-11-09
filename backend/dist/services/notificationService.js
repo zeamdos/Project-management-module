@@ -10,30 +10,36 @@ const typeorm_1 = require("typeorm");
 const data_source_1 = require("../config/data-source");
 const Notification_1 = require("../entities/Notification");
 const User_1 = require("../entities/User");
+const telegramBot_1 = require("./telegramBot");
 const LEAD_ROLES = [User_1.UserRole.ADMIN, User_1.UserRole.MANAGER, User_1.UserRole.TEAM_LEAD];
-let botInstance = null;
+let fallbackBotInstance = null;
 function getBot() {
-    if (botInstance)
-        return botInstance;
+    const activeBot = (0, telegramBot_1.getTelegramBotInstance)();
+    if (activeBot)
+        return activeBot;
+    if (fallbackBotInstance)
+        return fallbackBotInstance;
     const token = process.env.TELEGRAM_BOT_TOKEN?.trim();
     if (!token)
         return null;
-    botInstance = new node_telegram_bot_api_1.default(token, { polling: false });
-    return botInstance;
+    fallbackBotInstance = new node_telegram_bot_api_1.default(token, { polling: false });
+    return fallbackBotInstance;
 }
 let transporterInstance = null;
 function getTransporter() {
     if (transporterInstance)
         return transporterInstance;
-    const host = process.env.SMTP_HOST;
+    const host = process.env.EMAIL_HOST || process.env.SMTP_HOST;
     if (!host)
         return null;
+    const port = parseInt(process.env.EMAIL_PORT || process.env.SMTP_PORT || "587", 10);
+    const user = process.env.EMAIL_USER || process.env.SMTP_USER;
+    const pass = process.env.EMAIL_PASSWORD || process.env.EMAIL_PASS || process.env.SMTP_PASS;
     transporterInstance = nodemailer_1.default.createTransport({
         host,
-        port: parseInt(process.env.SMTP_PORT || "587", 10),
-        auth: process.env.SMTP_USER
-            ? { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS || "" }
-            : undefined,
+        port,
+        secure: port === 465,
+        auth: user && pass ? { user, pass } : undefined,
     });
     return transporterInstance;
 }
@@ -70,6 +76,7 @@ class NotificationService {
     /** In-app always. Telegram/email if the user opted in. SMS is never sent. */
     static async notifyUser(user, message, kind, critical = false) {
         const quiet = !critical && inQuietHours(user);
+        // 1. In-app notification
         if (user.notifyInApp !== false) {
             try {
                 await this.send(user.id, Notification_1.NotificationChannel.IN_APP, "", message, kind);
@@ -80,15 +87,19 @@ class NotificationService {
         }
         if (quiet)
             return;
+        // 2. Telegram notification
         if (user.notifyTelegram !== false && user.telegramChatId) {
             try {
                 await this.send(user.id, Notification_1.NotificationChannel.TELEGRAM, user.telegramChatId, message, kind);
+                console.log(`Telegram notification dispatched to user ${user.name} (${user.telegramChatId})`);
             }
             catch (err) {
-                console.error("Telegram notify failed:", err?.message || err);
+                console.error(`Telegram notify failed for user ${user.name}:`, err?.message || err);
             }
         }
-        if (user.notifyEmail !== false && user.email && getTransporter()) {
+        // 3. Email notification
+        const transporter = getTransporter();
+        if (user.notifyEmail !== false && user.email && transporter) {
             try {
                 await this.send(user.id, Notification_1.NotificationChannel.EMAIL, user.email, message, kind);
             }
@@ -121,6 +132,8 @@ class NotificationService {
                     const bot = getBot();
                     if (!bot)
                         throw new Error("Telegram bot token not configured");
+                    if (!contact)
+                        throw new Error("No Telegram chatId found for user");
                     await bot.sendMessage(contact, notification.message);
                     notification.status = Notification_1.NotificationStatus.SENT;
                     notification.errorMessage = null;
@@ -129,10 +142,11 @@ class NotificationService {
                     const transporter = getTransporter();
                     if (!transporter)
                         throw new Error("Email is not configured");
+                    const fromEmail = process.env.EMAIL_FROM || process.env.SMTP_FROM || '"Project Management" <no-reply@enterprise.com>';
                     await transporter.sendMail({
-                        from: process.env.SMTP_FROM || '"Project Management" <no-reply@pm.local>',
+                        from: fromEmail,
                         to: contact,
-                        subject: "Project Management Notification",
+                        subject: `[NEXUS Alert] ${notification.kind}`,
                         text: notification.message,
                     });
                     notification.status = Notification_1.NotificationStatus.SENT;
@@ -149,6 +163,7 @@ class NotificationService {
             catch (err) {
                 notification.status = Notification_1.NotificationStatus.FAILED;
                 notification.errorMessage = err.message || "Unknown error";
+                console.error(`Notification dispatch failed on attempt ${notification.attempts}:`, err.message);
             }
             await notifRepo.save(notification);
             if (notification.status === Notification_1.NotificationStatus.SENT)

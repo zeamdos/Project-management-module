@@ -37,6 +37,10 @@ __decorate([
     __metadata("design:type", Number)
 ], Project.prototype, "orgId", void 0);
 __decorate([
+    (0, typeorm_1.Column)({ type: "int", nullable: true }),
+    __metadata("design:type", Object)
+], Project.prototype, "pmId", void 0);
+__decorate([
     (0, typeorm_1.ManyToOne)(() => Organization_1.Organization, (org) => org.projects, { onDelete: "CASCADE" }),
     (0, typeorm_1.JoinColumn)({ name: "org_id" }),
     __metadata("design:type", Organization_1.Organization)

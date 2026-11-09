@@ -4,7 +4,9 @@ import { AppDataSource } from "../config/data-source";
 import { AuthRequest } from "../middleware/auth";
 import { User, UserRole } from "../entities/User";
 import { Task, TaskStatus } from "../entities/Task";
-import { GitActivity } from "../entities/GitActivity";
+import crypto from "crypto";
+import { GitActivity, GitActivityType } from "../entities/GitActivity";
+import { Repository } from "../entities/Repository";
 import { Notification, NotificationChannel } from "../entities/Notification";
 import { NotificationService } from "../services/NotificationService";
 import { AuditService } from "../services/AuditService";
@@ -133,6 +135,106 @@ export class DeveloperController {
       });
     } catch (error: any) {
       console.error("commits error:", error);
+      res.status(500).json({ error: error.message });
+    }
+  }
+
+  // POST /api/me/commits
+  static async logCommit(req: AuthRequest, res: Response): Promise<void> {
+    try {
+      const { taskId, message, hash, branch } = req.body;
+      if (!message || !String(message).trim()) {
+        res.status(400).json({ error: "Commit message is required." });
+        return;
+      }
+
+      const gitRepo = AppDataSource.getRepository(GitActivity);
+      const userRepo = AppDataSource.getRepository(User);
+      const taskRepo = AppDataSource.getRepository(Task);
+      const repositoryRepo = AppDataSource.getRepository(Repository);
+
+      const user = await userRepo.findOne({ where: { id: req.user!.id } });
+      if (!user) {
+        res.status(404).json({ error: "User not found" });
+        return;
+      }
+
+      let task: Task | null = null;
+      let targetTaskId: number | null = null;
+
+      if (taskId) {
+        targetTaskId = Number(taskId);
+        task = await taskRepo.findOne({
+          where: { id: targetTaskId },
+          relations: ["project", "project.repositories"],
+        });
+      } else {
+        const match = String(message).match(/(?:#|task-)(\d+)/i);
+        if (match) {
+          targetTaskId = Number(match[1]);
+          task = await taskRepo.findOne({
+            where: { id: targetTaskId },
+            relations: ["project", "project.repositories"],
+          });
+        }
+      }
+
+      let repositoryId = 1;
+      let repoUrl: string | null = null;
+      if (task?.project?.repositories && task.project.repositories.length > 0) {
+        repositoryId = task.project.repositories[0].id;
+        repoUrl = task.project.repositories[0].url;
+      } else {
+        const anyRepo = await repositoryRepo.findOne({ where: {} });
+        if (anyRepo) {
+          repositoryId = anyRepo.id;
+          repoUrl = anyRepo.url;
+        }
+      }
+
+      const commitHash = (hash && String(hash).trim()) || crypto.randomBytes(4).toString("hex");
+      const cleanMessage = String(message).trim();
+      const commitUrl = repoUrl ? `${repoUrl.replace(/\/+$/, "")}/commit/${commitHash}` : null;
+
+      const gitActivity = gitRepo.create({
+        repositoryId,
+        userId: user.id,
+        taskId: task ? task.id : targetTaskId,
+        activityType: GitActivityType.COMMIT,
+        externalId: commitHash,
+        message: cleanMessage,
+        url: commitUrl,
+      });
+
+      await gitRepo.save(gitActivity);
+
+      if (task && task.status === TaskStatus.TODO) {
+        await taskRepo.update(task.id, { status: TaskStatus.IN_PROGRESS });
+      }
+
+      await AuditService.log(
+        user.orgId,
+        user.id,
+        "GIT_COMMIT",
+        "GitActivity",
+        gitActivity.id,
+        `${user.name} recorded commit ${commitHash.slice(0, 7)}: "${cleanMessage}"${task ? ` linked to TASK-${task.id}` : ""}`
+      );
+
+      res.status(201).json({
+        message: "Commit recorded successfully",
+        commit: {
+          id: gitActivity.id,
+          type: gitActivity.activityType,
+          hash: gitActivity.externalId.slice(0, 7),
+          message: gitActivity.message,
+          url: gitActivity.url,
+          taskId: gitActivity.taskId,
+          createdAt: gitActivity.createdAt,
+        },
+      });
+    } catch (error: any) {
+      console.error("logCommit error:", error);
       res.status(500).json({ error: error.message });
     }
   }

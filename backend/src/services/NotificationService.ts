@@ -4,6 +4,7 @@ import { In } from "typeorm";
 import { AppDataSource } from "../config/data-source";
 import { Notification, NotificationChannel, NotificationStatus } from "../entities/Notification";
 import { User, UserRole, UserStatus } from "../entities/User";
+import { getTelegramBotInstance } from "./telegramBot";
 
 export type NotifyKind =
   | "TASK_ASSIGNED"
@@ -15,26 +16,32 @@ export type NotifyKind =
 
 const LEAD_ROLES = [UserRole.ADMIN, UserRole.MANAGER, UserRole.TEAM_LEAD];
 
-let botInstance: TelegramBot | null = null;
+let fallbackBotInstance: TelegramBot | null = null;
 function getBot(): TelegramBot | null {
-  if (botInstance) return botInstance;
+  const activeBot = getTelegramBotInstance();
+  if (activeBot) return activeBot;
+
+  if (fallbackBotInstance) return fallbackBotInstance;
   const token = process.env.TELEGRAM_BOT_TOKEN?.trim();
   if (!token) return null;
-  botInstance = new TelegramBot(token, { polling: false });
-  return botInstance;
+  fallbackBotInstance = new TelegramBot(token, { polling: false });
+  return fallbackBotInstance;
 }
 
 let transporterInstance: nodemailer.Transporter | null = null;
 function getTransporter(): nodemailer.Transporter | null {
   if (transporterInstance) return transporterInstance;
-  const host = process.env.SMTP_HOST;
+  const host = process.env.EMAIL_HOST || process.env.SMTP_HOST;
   if (!host) return null;
+  const port = parseInt(process.env.EMAIL_PORT || process.env.SMTP_PORT || "587", 10);
+  const user = process.env.EMAIL_USER || process.env.SMTP_USER;
+  const pass = process.env.EMAIL_PASSWORD || process.env.EMAIL_PASS || process.env.SMTP_PASS;
+
   transporterInstance = nodemailer.createTransport({
     host,
-    port: parseInt(process.env.SMTP_PORT || "587", 10),
-    auth: process.env.SMTP_USER
-      ? { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS || "" }
-      : undefined,
+    port,
+    secure: port === 465,
+    auth: user && pass ? { user, pass } : undefined,
   });
   return transporterInstance;
 }
@@ -79,6 +86,7 @@ export class NotificationService {
   static async notifyUser(user: User, message: string, kind: NotifyKind, critical = false): Promise<void> {
     const quiet = !critical && inQuietHours(user);
 
+    // 1. In-app notification
     if (user.notifyInApp !== false) {
       try {
         await this.send(user.id, NotificationChannel.IN_APP, "", message, kind);
@@ -89,15 +97,19 @@ export class NotificationService {
 
     if (quiet) return;
 
+    // 2. Telegram notification
     if (user.notifyTelegram !== false && user.telegramChatId) {
       try {
         await this.send(user.id, NotificationChannel.TELEGRAM, user.telegramChatId, message, kind);
+        console.log(`Telegram notification dispatched to user ${user.name} (${user.telegramChatId})`);
       } catch (err: any) {
-        console.error("Telegram notify failed:", err?.message || err);
+        console.error(`Telegram notify failed for user ${user.name}:`, err?.message || err);
       }
     }
 
-    if (user.notifyEmail !== false && user.email && getTransporter()) {
+    // 3. Email notification
+    const transporter = getTransporter();
+    if (user.notifyEmail !== false && user.email && transporter) {
       try {
         await this.send(user.id, NotificationChannel.EMAIL, user.email, message, kind);
       } catch (err: any) {
@@ -129,16 +141,18 @@ export class NotificationService {
         } else if (notification.channel === NotificationChannel.TELEGRAM) {
           const bot = getBot();
           if (!bot) throw new Error("Telegram bot token not configured");
+          if (!contact) throw new Error("No Telegram chatId found for user");
           await bot.sendMessage(contact, notification.message);
           notification.status = NotificationStatus.SENT;
           notification.errorMessage = null;
         } else if (notification.channel === NotificationChannel.EMAIL) {
           const transporter = getTransporter();
           if (!transporter) throw new Error("Email is not configured");
+          const fromEmail = process.env.EMAIL_FROM || process.env.SMTP_FROM || '"Project Management" <no-reply@enterprise.com>';
           await transporter.sendMail({
-            from: process.env.SMTP_FROM || '"Project Management" <no-reply@pm.local>',
+            from: fromEmail,
             to: contact,
-            subject: "Project Management Notification",
+            subject: `[NEXUS Alert] ${notification.kind}`,
             text: notification.message,
           });
           notification.status = NotificationStatus.SENT;
@@ -154,6 +168,7 @@ export class NotificationService {
       } catch (err: any) {
         notification.status = NotificationStatus.FAILED;
         notification.errorMessage = err.message || "Unknown error";
+        console.error(`Notification dispatch failed on attempt ${notification.attempts}:`, err.message);
       }
       await notifRepo.save(notification);
       if (notification.status === NotificationStatus.SENT) break;

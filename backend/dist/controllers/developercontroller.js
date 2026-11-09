@@ -1,11 +1,16 @@
 "use strict";
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.DeveloperController = void 0;
 const typeorm_1 = require("typeorm");
 const data_source_1 = require("../config/data-source");
 const User_1 = require("../entities/User");
 const Task_1 = require("../entities/Task");
+const crypto_1 = __importDefault(require("crypto"));
 const GitActivity_1 = require("../entities/GitActivity");
+const Repository_1 = require("../entities/Repository");
 const Notification_1 = require("../entities/Notification");
 const NotificationService_1 = require("../services/NotificationService");
 const AuditService_1 = require("../services/AuditService");
@@ -130,6 +135,90 @@ class DeveloperController {
         }
         catch (error) {
             console.error("commits error:", error);
+            res.status(500).json({ error: error.message });
+        }
+    }
+    // POST /api/me/commits
+    static async logCommit(req, res) {
+        try {
+            const { taskId, message, hash, branch } = req.body;
+            if (!message || !String(message).trim()) {
+                res.status(400).json({ error: "Commit message is required." });
+                return;
+            }
+            const gitRepo = data_source_1.AppDataSource.getRepository(GitActivity_1.GitActivity);
+            const userRepo = data_source_1.AppDataSource.getRepository(User_1.User);
+            const taskRepo = data_source_1.AppDataSource.getRepository(Task_1.Task);
+            const repositoryRepo = data_source_1.AppDataSource.getRepository(Repository_1.Repository);
+            const user = await userRepo.findOne({ where: { id: req.user.id } });
+            if (!user) {
+                res.status(404).json({ error: "User not found" });
+                return;
+            }
+            let task = null;
+            let targetTaskId = null;
+            if (taskId) {
+                targetTaskId = Number(taskId);
+                task = await taskRepo.findOne({
+                    where: { id: targetTaskId },
+                    relations: ["project", "project.repositories"],
+                });
+            }
+            else {
+                const match = String(message).match(/(?:#|task-)(\d+)/i);
+                if (match) {
+                    targetTaskId = Number(match[1]);
+                    task = await taskRepo.findOne({
+                        where: { id: targetTaskId },
+                        relations: ["project", "project.repositories"],
+                    });
+                }
+            }
+            let repositoryId = 1;
+            let repoUrl = null;
+            if (task?.project?.repositories && task.project.repositories.length > 0) {
+                repositoryId = task.project.repositories[0].id;
+                repoUrl = task.project.repositories[0].url;
+            }
+            else {
+                const anyRepo = await repositoryRepo.findOne({ where: {} });
+                if (anyRepo) {
+                    repositoryId = anyRepo.id;
+                    repoUrl = anyRepo.url;
+                }
+            }
+            const commitHash = (hash && String(hash).trim()) || crypto_1.default.randomBytes(4).toString("hex");
+            const cleanMessage = String(message).trim();
+            const commitUrl = repoUrl ? `${repoUrl.replace(/\/+$/, "")}/commit/${commitHash}` : null;
+            const gitActivity = gitRepo.create({
+                repositoryId,
+                userId: user.id,
+                taskId: task ? task.id : targetTaskId,
+                activityType: GitActivity_1.GitActivityType.COMMIT,
+                externalId: commitHash,
+                message: cleanMessage,
+                url: commitUrl,
+            });
+            await gitRepo.save(gitActivity);
+            if (task && task.status === Task_1.TaskStatus.TODO) {
+                await taskRepo.update(task.id, { status: Task_1.TaskStatus.IN_PROGRESS });
+            }
+            await AuditService_1.AuditService.log(user.orgId, user.id, "GIT_COMMIT", "GitActivity", gitActivity.id, `${user.name} recorded commit ${commitHash.slice(0, 7)}: "${cleanMessage}"${task ? ` linked to TASK-${task.id}` : ""}`);
+            res.status(201).json({
+                message: "Commit recorded successfully",
+                commit: {
+                    id: gitActivity.id,
+                    type: gitActivity.activityType,
+                    hash: gitActivity.externalId.slice(0, 7),
+                    message: gitActivity.message,
+                    url: gitActivity.url,
+                    taskId: gitActivity.taskId,
+                    createdAt: gitActivity.createdAt,
+                },
+            });
+        }
+        catch (error) {
+            console.error("logCommit error:", error);
             res.status(500).json({ error: error.message });
         }
     }

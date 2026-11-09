@@ -3,7 +3,27 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-require("dotenv/config"); // must be first so every other file sees the .env values
+const dotenv_1 = __importDefault(require("dotenv"));
+const path_1 = __importDefault(require("path"));
+// Load .env from the project root (one level above backend/)
+// Try backend/.env first; if it doesn't exist, load from ../  (the project root)
+const fs_1 = __importDefault(require("fs"));
+const localEnv = path_1.default.resolve(process.cwd(), ".env");
+const rootEnv = path_1.default.resolve(__dirname, "../../..", ".env"); // src -> backend -> project root
+const parentEnv = path_1.default.resolve(process.cwd(), "..", ".env");
+if (fs_1.default.existsSync(localEnv)) {
+    dotenv_1.default.config({ path: localEnv });
+}
+else if (fs_1.default.existsSync(parentEnv)) {
+    dotenv_1.default.config({ path: parentEnv });
+}
+else if (fs_1.default.existsSync(rootEnv)) {
+    dotenv_1.default.config({ path: rootEnv });
+}
+else {
+    dotenv_1.default.config(); // fallback
+}
+console.log("[ENV] Loaded from:", fs_1.default.existsSync(localEnv) ? localEnv : fs_1.default.existsSync(parentEnv) ? parentEnv : fs_1.default.existsSync(rootEnv) ? rootEnv : "default");
 require("reflect-metadata");
 const express_1 = __importDefault(require("express"));
 const helmet_1 = __importDefault(require("helmet"));
@@ -32,7 +52,15 @@ if (!process.env.JWT_SECRET && process.env.NODE_ENV === "production") {
 const isProd = process.env.NODE_ENV === "production";
 const app = (0, express_1.default)();
 app.use((0, helmet_1.default)());
-app.use((0, cors_1.default)());
+app.use((0, cors_1.default)({
+    origin: [
+        process.env.FRONTEND_URL || "http://localhost:5173",
+        "http://localhost:5173",
+        "http://localhost:3001",
+        "http://localhost:3000",
+    ],
+    credentials: true,
+}));
 // Keep the raw body too: GitHub signs the raw bytes, and webhookController checks that signature.
 app.use(express_1.default.json({ verify: (req, _res, buf) => { req.rawBody = buf; } }));
 const limiter = (0, express_rate_limit_1.default)({
@@ -62,6 +90,7 @@ app.post("/api/me/notifications/read-all", auth_1.authenticate, developerControl
 app.post("/api/me/notifications/:id/read", auth_1.authenticate, developerController_1.DeveloperController.readNotification);
 app.get("/api/me/tasks", auth_1.authenticate, developerController_1.DeveloperController.tasks);
 app.get("/api/me/commits", auth_1.authenticate, developerController_1.DeveloperController.commits);
+app.post("/api/me/commits", auth_1.authenticate, developerController_1.DeveloperController.logCommit);
 app.post("/api/me/telegram-link", auth_1.authenticate, developerController_1.DeveloperController.telegramLink);
 app.post("/api/me/tasks/:id/update", auth_1.authenticate, developerController_1.DeveloperController.updateTask);
 app.get("/api/insights", auth_1.authenticate, dashboardController_1.DashboardController.insights);
@@ -95,7 +124,7 @@ app.get("/api/tasks/:taskId/suggest-assignee", auth_1.authenticate, (0, auth_1.r
 // Dashboard Routes
 app.get("/api/projects/:projectId/health", auth_1.authenticate, dashboardController_1.DashboardController.getProjectHealth);
 const PORT = process.env.PORT || 3000;
-// Database seeder: auto-create Admin & PM accounts from .env on boot
+// Database seeder: auto-create Admin, PM, and Developers on boot with complete details
 async function seedMasterUsers() {
     try {
         const userRepo = data_source_1.AppDataSource.getRepository(User_1.User);
@@ -109,74 +138,114 @@ async function seedMasterUsers() {
         // 1. Seed Admin
         const adminEmail = (process.env.ADMIN_EMAIL || "admin@enterprise.com").toLowerCase().trim();
         const adminPass = process.env.ADMIN_PASSWORD || "supersecureadminpass";
-        const existingAdmin = await userRepo.findOne({ where: { email: adminEmail } });
-        if (!existingAdmin) {
+        let admin = await userRepo.findOne({ where: { email: adminEmail } });
+        if (!admin) {
             const passwordHash = await bcryptjs_1.default.hash(adminPass, salt);
-            const admin = userRepo.create({
+            admin = userRepo.create({
                 orgId: org.id,
                 email: adminEmail,
                 passwordHash,
                 name: "Master Admin",
                 role: User_1.UserRole.ADMIN,
+                department: "Executive Leadership",
+                team: "Executive",
+                phoneNumber: "+251911000000",
                 status: User_1.UserStatus.ACTIVE,
             });
             await userRepo.save(admin);
             console.log("Master Admin seeded successfully.");
         }
+        else {
+            if (!admin.phoneNumber)
+                admin.phoneNumber = "+251911000000";
+            if (!admin.department)
+                admin.department = "Executive Leadership";
+            if (!admin.team)
+                admin.team = "Executive";
+            await userRepo.save(admin);
+        }
         // 2. Seed Project Manager
         const pmEmail = (process.env.PM_EMAIL || "pm@enterprise.com").toLowerCase().trim();
         const pmPass = process.env.PM_PASSWORD || "supersecurepmepass";
-        const existingPm = await userRepo.findOne({ where: { email: pmEmail } });
-        if (!existingPm) {
+        let pm = await userRepo.findOne({ where: { email: pmEmail } });
+        if (!pm) {
             const passwordHash = await bcryptjs_1.default.hash(pmPass, salt);
-            const pm = userRepo.create({
+            pm = userRepo.create({
                 orgId: org.id,
                 email: pmEmail,
                 passwordHash,
                 name: "Project Manager",
                 role: User_1.UserRole.MANAGER,
+                department: "Engineering Management",
+                team: "Core Delivery",
+                phoneNumber: "+251911223344",
                 status: User_1.UserStatus.ACTIVE,
             });
             await userRepo.save(pm);
             console.log("Project Manager seeded successfully.");
         }
-        // 3. Seed Enterprise Dedicated Developers (Distinct accounts, specialties, and credentials)
+        else {
+            if (!pm.phoneNumber)
+                pm.phoneNumber = "+251911223344";
+            if (!pm.department)
+                pm.department = "Engineering Management";
+            if (!pm.team)
+                pm.team = "Core Delivery";
+            await userRepo.save(pm);
+        }
+        // 3. Seed Enterprise Dedicated Developers
         const seedDevelopers = [
             {
                 name: "Alex Mercer",
                 email: "alex.mercer@enterprise.com",
-                specialty: "frontend",
+                specialty: "Frontend",
+                department: "Engineering",
+                team: "Frontend Engineering",
+                phoneNumber: "+251911445566",
                 githubUsername: "alexmercer-dev",
             },
             {
                 name: "David Kim",
                 email: "david.kim@enterprise.com",
-                specialty: "backend",
+                specialty: "Backend",
+                department: "Engineering",
+                team: "Backend Infrastructure",
+                phoneNumber: "+251911556677",
                 githubUsername: "dkim-backend",
             },
             {
                 name: "Elena Rostova",
                 email: "elena.rostova@enterprise.com",
-                specialty: "ui/ux",
+                specialty: "UI/UX",
+                department: "Product Design",
+                team: "UI/UX Design Systems",
+                phoneNumber: "+251911667788",
                 githubUsername: "elenar-design",
             },
             {
                 name: "Marcus Vance",
                 email: "marcus.vance@enterprise.com",
-                specialty: "ai",
+                specialty: "AI",
+                department: "Applied AI",
+                team: "Machine Learning Solutions",
+                phoneNumber: "+251911778899",
                 githubUsername: "marcusv-ai",
             },
         ];
         const defaultDevPass = process.env.DEFAULT_DEV_PASSWORD || "Developer123!";
         const devPassHash = await bcryptjs_1.default.hash(defaultDevPass, salt);
         for (const devData of seedDevelopers) {
-            const existingDev = await userRepo.findOne({ where: { email: devData.email } });
-            if (!existingDev) {
-                const dev = userRepo.create({
+            let dev = await userRepo.findOne({ where: { email: devData.email } });
+            if (!dev) {
+                dev = userRepo.create({
                     orgId: org.id,
                     email: devData.email,
                     name: devData.name,
                     specialty: devData.specialty,
+                    department: devData.department,
+                    team: devData.team,
+                    assignedPmId: pm.id,
+                    phoneNumber: devData.phoneNumber,
                     githubUsername: devData.githubUsername,
                     passwordHash: devPassHash,
                     role: User_1.UserRole.DEVELOPER,
@@ -184,6 +253,27 @@ async function seedMasterUsers() {
                 });
                 await userRepo.save(dev);
                 console.log(`Developer ${devData.name} (${devData.email}) seeded.`);
+            }
+            else {
+                let changed = false;
+                if (!dev.phoneNumber) {
+                    dev.phoneNumber = devData.phoneNumber;
+                    changed = true;
+                }
+                if (!dev.assignedPmId) {
+                    dev.assignedPmId = pm.id;
+                    changed = true;
+                }
+                if (!dev.department) {
+                    dev.department = devData.department;
+                    changed = true;
+                }
+                if (!dev.team) {
+                    dev.team = devData.team;
+                    changed = true;
+                }
+                if (changed)
+                    await userRepo.save(dev);
             }
         }
     }

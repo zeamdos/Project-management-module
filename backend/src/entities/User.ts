@@ -51,6 +51,15 @@ export class User {
   @Column({ type: "varchar", nullable: true })
   specialty!: string | null;
 
+  @Column({ type: "int", nullable: true })
+  assignedPmId!: number | null;
+
+  @Column({ type: "varchar", nullable: true })
+  department!: string | null;
+
+  @Column({ type: "varchar", nullable: true })
+  team!: string | null;
+
   @Column({
     type: "enum",
     enum: UserStatus,

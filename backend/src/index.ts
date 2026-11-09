@@ -1,4 +1,23 @@
-import "dotenv/config"; // must be first so every other file sees the .env values
+import dotenv from "dotenv";
+import path from "path";
+
+// Load .env from the project root (one level above backend/)
+// Try backend/.env first; if it doesn't exist, load from ../  (the project root)
+import fs from "fs";
+const localEnv = path.resolve(process.cwd(), ".env");
+const rootEnv = path.resolve(__dirname, "../../..", ".env"); // src -> backend -> project root
+const parentEnv = path.resolve(process.cwd(), "..", ".env");
+
+if (fs.existsSync(localEnv)) {
+  dotenv.config({ path: localEnv });
+} else if (fs.existsSync(parentEnv)) {
+  dotenv.config({ path: parentEnv });
+} else if (fs.existsSync(rootEnv)) {
+  dotenv.config({ path: rootEnv });
+} else {
+  dotenv.config(); // fallback
+}
+console.log("[ENV] Loaded from:", fs.existsSync(localEnv) ? localEnv : fs.existsSync(parentEnv) ? parentEnv : fs.existsSync(rootEnv) ? rootEnv : "default");
 import "reflect-metadata";
 import express from "express";
 import helmet from "helmet";
@@ -30,7 +49,17 @@ const isProd = process.env.NODE_ENV === "production";
 
 const app = express();
 app.use(helmet());
-app.use(cors());
+app.use(
+  cors({
+    origin: [
+      process.env.FRONTEND_URL || "http://localhost:5173",
+      "http://localhost:5173",
+      "http://localhost:3001",
+      "http://localhost:3000",
+    ],
+    credentials: true,
+  })
+);
 // Keep the raw body too: GitHub signs the raw bytes, and webhookController checks that signature.
 app.use(express.json({ verify: (req, _res, buf) => { (req as any).rawBody = buf; } }));
 
@@ -65,6 +94,7 @@ app.post("/api/me/notifications/read-all", authenticate, DeveloperController.rea
 app.post("/api/me/notifications/:id/read", authenticate, DeveloperController.readNotification);
 app.get("/api/me/tasks", authenticate, DeveloperController.tasks);
 app.get("/api/me/commits", authenticate, DeveloperController.commits);
+app.post("/api/me/commits", authenticate, DeveloperController.logCommit);
 app.post("/api/me/telegram-link", authenticate, DeveloperController.telegramLink);
 app.post("/api/me/tasks/:id/update", authenticate, DeveloperController.updateTask);
 app.get("/api/insights", authenticate, DashboardController.insights);
@@ -105,10 +135,9 @@ app.get("/api/tasks/:taskId/suggest-assignee", authenticate, requireRole(UserRol
 // Dashboard Routes
 app.get("/api/projects/:projectId/health", authenticate, DashboardController.getProjectHealth);
 
-
 const PORT = process.env.PORT || 3000;
 
-// Database seeder: auto-create Admin & PM accounts from .env on boot
+// Database seeder: auto-create Admin, PM, and Developers on boot with complete details
 async function seedMasterUsers() {
   try {
     const userRepo = AppDataSource.getRepository(User);
@@ -125,65 +154,93 @@ async function seedMasterUsers() {
     // 1. Seed Admin
     const adminEmail = (process.env.ADMIN_EMAIL || "admin@enterprise.com").toLowerCase().trim();
     const adminPass = process.env.ADMIN_PASSWORD || "supersecureadminpass";
-    const existingAdmin = await userRepo.findOne({ where: { email: adminEmail } });
+    let admin = await userRepo.findOne({ where: { email: adminEmail } });
 
-    if (!existingAdmin) {
+    if (!admin) {
       const passwordHash = await bcrypt.hash(adminPass, salt);
-      const admin = userRepo.create({
+      admin = userRepo.create({
         orgId: org.id,
         email: adminEmail,
         passwordHash,
         name: "Master Admin",
         role: UserRole.ADMIN,
+        department: "Executive Leadership",
+        team: "Executive",
+        phoneNumber: "+251911000000",
         status: UserStatus.ACTIVE,
       });
       await userRepo.save(admin);
       console.log("Master Admin seeded successfully.");
+    } else {
+      if (!admin.phoneNumber) admin.phoneNumber = "+251911000000";
+      if (!admin.department) admin.department = "Executive Leadership";
+      if (!admin.team) admin.team = "Executive";
+      await userRepo.save(admin);
     }
 
     // 2. Seed Project Manager
     const pmEmail = (process.env.PM_EMAIL || "pm@enterprise.com").toLowerCase().trim();
     const pmPass = process.env.PM_PASSWORD || "supersecurepmepass";
-    const existingPm = await userRepo.findOne({ where: { email: pmEmail } });
+    let pm = await userRepo.findOne({ where: { email: pmEmail } });
 
-    if (!existingPm) {
+    if (!pm) {
       const passwordHash = await bcrypt.hash(pmPass, salt);
-      const pm = userRepo.create({
+      pm = userRepo.create({
         orgId: org.id,
         email: pmEmail,
         passwordHash,
         name: "Project Manager",
         role: UserRole.MANAGER,
+        department: "Engineering Management",
+        team: "Core Delivery",
+        phoneNumber: "+251911223344",
         status: UserStatus.ACTIVE,
       });
       await userRepo.save(pm);
       console.log("Project Manager seeded successfully.");
+    } else {
+      if (!pm.phoneNumber) pm.phoneNumber = "+251911223344";
+      if (!pm.department) pm.department = "Engineering Management";
+      if (!pm.team) pm.team = "Core Delivery";
+      await userRepo.save(pm);
     }
 
-    // 3. Seed Enterprise Dedicated Developers (Distinct accounts, specialties, and credentials)
+    // 3. Seed Enterprise Dedicated Developers
     const seedDevelopers = [
       {
         name: "Alex Mercer",
         email: "alex.mercer@enterprise.com",
-        specialty: "frontend",
+        specialty: "Frontend",
+        department: "Engineering",
+        team: "Frontend Engineering",
+        phoneNumber: "+251911445566",
         githubUsername: "alexmercer-dev",
       },
       {
         name: "David Kim",
         email: "david.kim@enterprise.com",
-        specialty: "backend",
+        specialty: "Backend",
+        department: "Engineering",
+        team: "Backend Infrastructure",
+        phoneNumber: "+251911556677",
         githubUsername: "dkim-backend",
       },
       {
         name: "Elena Rostova",
         email: "elena.rostova@enterprise.com",
-        specialty: "ui/ux",
+        specialty: "UI/UX",
+        department: "Product Design",
+        team: "UI/UX Design Systems",
+        phoneNumber: "+251911667788",
         githubUsername: "elenar-design",
       },
       {
         name: "Marcus Vance",
         email: "marcus.vance@enterprise.com",
-        specialty: "ai",
+        specialty: "AI",
+        department: "Applied AI",
+        team: "Machine Learning Solutions",
+        phoneNumber: "+251911778899",
         githubUsername: "marcusv-ai",
       },
     ];
@@ -192,13 +249,17 @@ async function seedMasterUsers() {
     const devPassHash = await bcrypt.hash(defaultDevPass, salt);
 
     for (const devData of seedDevelopers) {
-      const existingDev = await userRepo.findOne({ where: { email: devData.email } });
-      if (!existingDev) {
-        const dev = userRepo.create({
+      let dev = await userRepo.findOne({ where: { email: devData.email } });
+      if (!dev) {
+        dev = userRepo.create({
           orgId: org.id,
           email: devData.email,
           name: devData.name,
           specialty: devData.specialty,
+          department: devData.department,
+          team: devData.team,
+          assignedPmId: pm.id,
+          phoneNumber: devData.phoneNumber,
           githubUsername: devData.githubUsername,
           passwordHash: devPassHash,
           role: UserRole.DEVELOPER,
@@ -206,12 +267,18 @@ async function seedMasterUsers() {
         });
         await userRepo.save(dev);
         console.log(`Developer ${devData.name} (${devData.email}) seeded.`);
+      } else {
+        let changed = false;
+        if (!dev.phoneNumber) { dev.phoneNumber = devData.phoneNumber; changed = true; }
+        if (!dev.assignedPmId) { dev.assignedPmId = pm.id; changed = true; }
+        if (!dev.department) { dev.department = devData.department; changed = true; }
+        if (!dev.team) { dev.team = devData.team; changed = true; }
+        if (changed) await userRepo.save(dev);
       }
     }
   } catch (err) {
     console.error("Error during master seeding:", err);
   }
-
 }
 
 AppDataSource.initialize()

@@ -60,6 +60,9 @@ export const RolesPermissions: React.FC<RolesPermissionsProps> = ({
   const [newRoleDesc, setNewRoleDesc] = useState("");
   const [baseCloneRoleId, setBaseCloneRoleId] = useState("DEVELOPER");
 
+  // Expanded permission descriptions state
+  const [expandedPermissions, setExpandedPermissions] = useState<Set<string>>(new Set());
+
   const currentRole = roles.find((r) => r.id === selectedRoleId) || roles[0];
   const selectedUser = usersList.find((u) => u.id === selectedUserId) || usersList[0];
 
@@ -244,6 +247,18 @@ export const RolesPermissions: React.FC<RolesPermissionsProps> = ({
 
     setSaveSuccessMsg("Default role permissions restored.");
     setTimeout(() => setSaveSuccessMsg(""), 3500);
+  };
+
+  const togglePermissionDescription = (permKey: string) => {
+    setExpandedPermissions((prev) => {
+      const next = new Set(prev);
+      if (next.has(permKey)) {
+        next.delete(permKey);
+      } else {
+        next.add(permKey);
+      }
+      return next;
+    });
   };
 
   return (
@@ -490,7 +505,27 @@ export const RolesPermissions: React.FC<RolesPermissionsProps> = ({
                             </span>
                           )}
                         </div>
-                        <p className="mt-1 text-xs text-[#777]">{perm.description}</p>
+                        <div className="mt-1">
+                          <p className="text-xs text-[#777]">
+                            {expandedPermissions.has(perm.key)
+                              ? perm.description
+                              : perm.description.length > 60
+                              ? perm.description.slice(0, 60) + "..."
+                              : perm.description}
+                          </p>
+                          {perm.description.length > 60 && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                togglePermissionDescription(perm.key);
+                              }}
+                              className="text-[10px] text-[#888] hover:text-white mt-0.5 underline underline-offset-2"
+                            >
+                              {expandedPermissions.has(perm.key) ? "Show less" : "See details"}
+                            </button>
+                          )}
+                        </div>
                       </div>
 
                       <div className="pt-0.5">
@@ -517,7 +552,7 @@ export const RolesPermissions: React.FC<RolesPermissionsProps> = ({
 
       {/* Create Custom Role Modal */}
       {showCreateRoleModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm">
+        <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/80 p-4 pt-6 backdrop-blur-sm overflow-y-auto">
           <div className="w-full max-w-md rounded-2xl border border-[#333] bg-[#141414] p-6 shadow-2xl space-y-5">
             <div className="flex items-center justify-between border-b border-[#242424] pb-4">
               <h3 className="text-base font-semibold text-white">Create Custom Role</h3>

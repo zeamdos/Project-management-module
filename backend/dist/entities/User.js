@@ -70,6 +70,18 @@ __decorate([
     __metadata("design:type", Object)
 ], User.prototype, "specialty", void 0);
 __decorate([
+    (0, typeorm_1.Column)({ type: "int", nullable: true }),
+    __metadata("design:type", Object)
+], User.prototype, "assignedPmId", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: "varchar", nullable: true }),
+    __metadata("design:type", Object)
+], User.prototype, "department", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: "varchar", nullable: true }),
+    __metadata("design:type", Object)
+], User.prototype, "team", void 0);
+__decorate([
     (0, typeorm_1.Column)({
         type: "enum",
         enum: UserStatus,

@@ -1,4 +1,4 @@
-import React, { useMemo } from "react";
+import React, { useMemo, useState } from "react";
 import {
   Activity,
   AlertCircle,
@@ -31,6 +31,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   onNavigate,
   onSelectTask,
 }) => {
+  const [expandedProjectDesc, setExpandedProjectDesc] = useState<Set<number>>(new Set());
+
   const adminCount = users.filter((u) => u.role === "ADMIN").length;
   const pmCount = users.filter((u) => ["MANAGER", "PROJECT_MANAGER"].includes(u.role)).length;
   const devCount = users.filter((u) => ["DEVELOPER", "SENIOR_DEVELOPER"].includes(u.role)).length;
@@ -229,9 +231,33 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                           </span>
                         )}
                       </div>
-                      <p className="text-[11px] text-[#777] mt-1 line-clamp-1">
-                        {project.description || "Active software development lifecycle project."}
-                      </p>
+                      <div className="mt-1">
+                        <p className="text-[11px] text-[#777]">
+                          {expandedProjectDesc.has(project.id)
+                            ? (project.description || "Active software development lifecycle project.")
+                            : ((project.description || "Active software development lifecycle project.").length > 50
+                              ? (project.description || "Active software development lifecycle project.").slice(0, 50) + "..."
+                              : (project.description || "Active software development lifecycle project."))}
+                        </p>
+                        {(project.description || "").length > 50 && (
+                          <button
+                            onClick={() => {
+                              setExpandedProjectDesc((prev) => {
+                                const next = new Set(prev);
+                                if (next.has(project.id)) {
+                                  next.delete(project.id);
+                                } else {
+                                  next.add(project.id);
+                                }
+                                return next;
+                              });
+                            }}
+                            className="text-[10px] text-[#888] hover:text-white mt-0.5 underline underline-offset-2"
+                          >
+                            {expandedProjectDesc.has(project.id) ? "Show less" : "See details"}
+                          </button>
+                        )}
+                      </div>
                     </div>
                     <span className="text-xs font-mono font-semibold text-[#ddd]">{rate}%</span>
                   </div>

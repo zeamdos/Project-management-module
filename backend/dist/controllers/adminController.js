@@ -7,6 +7,8 @@ exports.AdminController = void 0;
 const data_source_1 = require("../config/data-source");
 const User_1 = require("../entities/User");
 const Organization_1 = require("../entities/Organization");
+const Skill_1 = require("../entities/Skill");
+const UserSkill_1 = require("../entities/UserSkill");
 const AuditService_1 = require("../services/AuditService");
 const NotificationService_1 = require("../services/NotificationService");
 const bcryptjs_1 = __importDefault(require("bcryptjs"));
@@ -41,10 +43,15 @@ function sanitizeUser(u) {
         name: u.name,
         email: u.email,
         role: u.role,
+        department: u.department,
+        team: u.team,
         specialty: u.specialty,
+        assignedPmId: u.assignedPmId,
         status: u.status,
         githubUsername: u.githubUsername,
         phoneNumber: u.phoneNumber,
+        telegramChatId: u.telegramChatId,
+        telegramLinked: !!u.telegramChatId,
         notifyInApp: u.notifyInApp,
         notifyTelegram: u.notifyTelegram,
         notifyEmail: u.notifyEmail,
@@ -71,7 +78,7 @@ class AdminController {
     // POST /api/admin/users  — provision a new account (Admin only)
     static async createUser(req, res) {
         try {
-            const { name, email, role, specialty, githubUsername, phoneNumber, department } = req.body;
+            const { name, email, role, specialty, githubUsername, phoneNumber, department, team, assignedPmId, skills } = req.body;
             if (!name || !email || !role) {
                 res.status(400).json({ error: "name, email and role are required." });
                 return;
@@ -93,19 +100,49 @@ class AdminController {
             const org = await getOrg();
             const tempPassword = generateTempPassword();
             const passwordHash = await bcryptjs_1.default.hash(tempPassword, 12);
-            const userRepo = data_source_1.AppDataSource.getRepository(User_1.User);
-            const newUser = userRepo.create({
-                orgId: org.id,
-                name: String(name).trim(),
-                email: normalizedEmail,
-                passwordHash,
-                role: role,
-                status: User_1.UserStatus.ACTIVE,
-                specialty: specialty || null,
-                githubUsername: githubUsername || null,
-                phoneNumber: phoneNumber || null,
+            // Handle skills in a transaction
+            const newUser = await data_source_1.AppDataSource.transaction(async (manager) => {
+                const userRepo = manager.getRepository(User_1.User);
+                const skillRepo = manager.getRepository(Skill_1.Skill);
+                const userSkillRepo = manager.getRepository(UserSkill_1.UserSkill);
+                const created = userRepo.create({
+                    orgId: org.id,
+                    name: String(name).trim(),
+                    email: normalizedEmail,
+                    passwordHash,
+                    role: role,
+                    status: User_1.UserStatus.ACTIVE,
+                    specialty: specialty || null,
+                    assignedPmId: assignedPmId ? Number(assignedPmId) : null,
+                    department: department || null,
+                    team: team || null,
+                    githubUsername: githubUsername || null,
+                    phoneNumber: phoneNumber || null,
+                });
+                await userRepo.save(created);
+                // Add skills if provided
+                if (Array.isArray(skills) && skills.length > 0) {
+                    const skillNames = Array.from(new Set(skills.map((s) => String(s).trim()).filter(Boolean)));
+                    for (const skillName of skillNames) {
+                        let skill = await skillRepo.findOne({ where: { name: skillName, orgId: org.id } });
+                        if (!skill) {
+                            skill = skillRepo.create({ name: skillName, orgId: org.id });
+                            await skillRepo.save(skill);
+                        }
+                        const existingLink = await userSkillRepo.findOne({
+                            where: { userId: created.id, skillId: skill.id }
+                        });
+                        if (!existingLink) {
+                            await userSkillRepo.save({
+                                userId: created.id,
+                                skillId: skill.id,
+                                orgId: org.id
+                            });
+                        }
+                    }
+                }
+                return created;
             });
-            await userRepo.save(newUser);
             await AuditService_1.AuditService.log(org.id, req.user.id, "USER_PROVISIONED", "User", newUser.id, `Admin provisioned account for ${newUser.name} (${newUser.email}) with role ${role}`);
             // Notify the new user if email is configured
             try {
@@ -125,7 +162,7 @@ class AdminController {
             res.status(500).json({ error: err.message });
         }
     }
-    // PATCH /api/admin/users/:id  — update name, role, status, specialty, etc.
+    // PATCH /api/admin/users/:id  — update name, role, status, specialty, assigned PM, etc.
     static async updateUser(req, res) {
         try {
             const targetId = Number(req.params.id);
@@ -137,7 +174,7 @@ class AdminController {
                 res.status(404).json({ error: "User not found in your organization." });
                 return;
             }
-            const { name, role, status, specialty, githubUsername, phoneNumber, notifyInApp, notifyTelegram, notifyEmail } = req.body;
+            const { name, role, status, specialty, assignedPmId, department, team, githubUsername, phoneNumber, notifyInApp, notifyTelegram, notifyEmail, } = req.body;
             if (name !== undefined)
                 target.name = String(name).trim();
             if (role !== undefined) {
@@ -167,6 +204,13 @@ class AdminController {
             }
             if (specialty !== undefined)
                 target.specialty = specialty || null;
+            if (assignedPmId !== undefined) {
+                target.assignedPmId = assignedPmId ? Number(assignedPmId) : null;
+            }
+            if (department !== undefined)
+                target.department = department || null;
+            if (team !== undefined)
+                target.team = team || null;
             if (githubUsername !== undefined)
                 target.githubUsername = githubUsername || null;
             if (phoneNumber !== undefined)

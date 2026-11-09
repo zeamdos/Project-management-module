@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   AlertCircle,
   Check,
@@ -29,7 +29,6 @@ import {
 import { getRoles } from "../../services/permissions";
 import API from "../../services/api";
 
-
 interface UserManagementProps {
   onConfigureUserPermissions: (user: User) => void;
 }
@@ -48,10 +47,12 @@ export const UserManagement: React.FC<UserManagementProps> = ({
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
   const [assignedRole, setAssignedRole] = useState<UserRole>("DEVELOPER");
-  const [department, setDepartment] = useState("Engineering");
+  const [unifiedRole, setUnifiedRole] = useState("Developer - Frontend");
   const [team, setTeam] = useState("Frontend Engineering");
-  const [specialty, setSpecialty] = useState("Frontend");
   const [assignedPmId, setAssignedPmId] = useState<number | undefined>(2);
+  const [phoneNumber, setPhoneNumber] = useState("");
+  const [githubUsername, setGithubUsername] = useState("");
+  const [skillsInput, setSkillsInput] = useState("");
   const [generatedPassword, setGeneratedPassword] = useState("");
   const [copied, setCopied] = useState(false);
   const [createSuccessMsg, setCreateSuccessMsg] = useState("");
@@ -64,6 +65,37 @@ export const UserManagement: React.FC<UserManagementProps> = ({
   const projectManagers = usersList.filter(
     (u) => u.role === "PROJECT_MANAGER" || u.role === "MANAGER"
   );
+
+  // Sync with live backend API on mount
+  useEffect(() => {
+    API.get("/admin/users")
+      .then((res) => {
+        if (res.data?.users && Array.isArray(res.data.users)) {
+          const serverUsers: User[] = res.data.users.map((su: any) => ({
+            id: su.id,
+            orgId: su.orgId,
+            name: su.name,
+            email: su.email,
+            role: su.role,
+            department: su.department || "Engineering",
+            team: su.team || "General",
+            specialty: su.specialty || undefined,
+            assignedPmId: su.assignedPmId || undefined,
+            status: su.status,
+            phoneNumber: su.phoneNumber || null,
+            githubUsername: su.githubUsername || null,
+            telegramLinked: !!su.telegramChatId,
+            avatar: su.name ? su.name.slice(0, 2).toUpperCase() : "U",
+            createdAt: su.createdAt,
+          }));
+          setUsersList(serverUsers);
+          saveStoredUsers(serverUsers);
+        }
+      })
+      .catch(() => {
+        // graceful offline fallback
+      });
+  }, []);
 
   const generateRandomPassword = () => {
     const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789!@#$%";
@@ -78,10 +110,12 @@ export const UserManagement: React.FC<UserManagementProps> = ({
     generateRandomPassword();
     setFullName("");
     setEmail("");
+    setPhoneNumber("");
+    setGithubUsername("");
+    setSkillsInput("");
     setAssignedRole("DEVELOPER");
-    setDepartment("Engineering");
+    setUnifiedRole("Developer - Frontend");
     setTeam(teams[0]?.name || "Frontend Engineering");
-    setSpecialty("Frontend");
     setAssignedPmId(projectManagers[0]?.id || undefined);
     setCreateSuccessMsg("");
     setShowCreateModal(true);
@@ -91,14 +125,28 @@ export const UserManagement: React.FC<UserManagementProps> = ({
     e.preventDefault();
     if (!fullName || !email) return;
 
+    // Parse unified role to extract role and specialty
+    const [roleStr, specialtyStr] = unifiedRole.split(" - ");
+    const finalRole = roleStr === "Manager" ? "MANAGER" : roleStr === "Administrator" ? "ADMIN" : "DEVELOPER";
+    const finalSpecialty = specialtyStr || undefined;
+    const finalDepartment = finalRole === "ADMIN" ? "Executive Leadership" : finalRole === "MANAGER" ? "Engineering Management" : "Engineering";
+    const skills = skillsInput.split(",").map((s) => s.trim()).filter(Boolean);
+
     try {
-      // Try real backend first
+      // Real backend API call
       const res = await API.post("/admin/users", {
         name: fullName.trim(),
         email: email.trim().toLowerCase(),
-        role: assignedRole,
-        specialty: assignedRole === "DEVELOPER" ? specialty : undefined,
+        role: finalRole,
+        department: finalDepartment,
+        team,
+        specialty: finalSpecialty,
+        assignedPmId: finalRole === "DEVELOPER" ? assignedPmId : undefined,
+        phoneNumber: phoneNumber.trim() || undefined,
+        githubUsername: githubUsername.trim() || undefined,
+        skills: skills.length > 0 ? skills : undefined,
       });
+
       const { user: created, tempPassword } = res.data;
       const newUser: User = {
         id: created.id,
@@ -106,9 +154,12 @@ export const UserManagement: React.FC<UserManagementProps> = ({
         name: created.name,
         email: created.email,
         role: created.role,
-        department,
-        team,
+        department: created.department || finalDepartment,
+        team: created.team || team,
         specialty: created.specialty,
+        assignedPmId: created.assignedPmId || assignedPmId,
+        phoneNumber: created.phoneNumber || phoneNumber.trim() || null,
+        githubUsername: created.githubUsername || githubUsername.trim() || null,
         status: "ACTIVE",
         isTemporaryPassword: true,
         avatar: created.name.slice(0, 2).toUpperCase(),
@@ -119,21 +170,28 @@ export const UserManagement: React.FC<UserManagementProps> = ({
       setUsersList(updated);
       refreshUsers();
       setCreateSuccessMsg(
-        `✅ Account for ${newUser.name} provisioned.\n\nTemporary password: ${tempPassword}\n\nShare this securely with the employee — they must change it on first login.`
+        `✅ Account for ${newUser.name} provisioned.\n\nTemporary password: ${tempPassword}\n\nShare this securely with the employee. They must change it upon first login.`
       );
     } catch {
-      // Offline / no-backend fallback: local-only
+      // Offline fallback
       const initials = fullName.split(" ").map((n) => n[0]).join("").slice(0, 2).toUpperCase();
+      const [roleStr, specialtyStr] = unifiedRole.split(" - ");
+      const finalRole = roleStr === "Manager" ? "MANAGER" : roleStr === "Administrator" ? "ADMIN" : "DEVELOPER";
+      const finalSpecialty = specialtyStr || undefined;
+      const finalDepartment = finalRole === "ADMIN" ? "Executive Leadership" : finalRole === "MANAGER" ? "Engineering Management" : "Engineering";
+
       const newUser: User = {
         id: Date.now(),
         orgId: 1,
         name: fullName.trim(),
         email: email.trim().toLowerCase(),
-        role: assignedRole,
-        department,
+        role: finalRole as UserRole,
+        department: finalDepartment,
         team,
-        specialty: assignedRole === "DEVELOPER" ? specialty : undefined,
-        assignedPmId: assignedRole === "DEVELOPER" ? assignedPmId : undefined,
+        specialty: finalSpecialty,
+        assignedPmId: finalRole === "DEVELOPER" ? assignedPmId : undefined,
+        phoneNumber: phoneNumber.trim() || null,
+        githubUsername: githubUsername.trim() || null,
         status: "ACTIVE",
         isTemporaryPassword: true,
         avatar: initials,
@@ -211,13 +269,15 @@ export const UserManagement: React.FC<UserManagementProps> = ({
         role: editingUser.role,
         status: editingUser.status,
         specialty: editingUser.specialty,
+        assignedPmId: editingUser.assignedPmId || null,
+        department: editingUser.department,
+        team: editingUser.team,
         githubUsername: editingUser.githubUsername,
         phoneNumber: editingUser.phoneNumber,
       });
     } catch {
       // Fallback to local
     }
-
 
     const updated = usersList.map((u) =>
       u.id === editingUser.id ? editingUser : u
@@ -231,11 +291,9 @@ export const UserManagement: React.FC<UserManagementProps> = ({
     setEditingUser(null);
   };
 
-
-
   const filteredUsers = usersList.filter((u) => {
     const matchesSearch =
-      `${u.name} ${u.email} ${u.team || ""}`
+      `${u.name} ${u.email} ${u.team || ""} ${u.phoneNumber || ""}`
         .toLowerCase()
         .includes(search.toLowerCase());
     const matchesRole = roleFilter === "ALL" || u.role.toUpperCase() === roleFilter.toUpperCase();
@@ -250,7 +308,7 @@ export const UserManagement: React.FC<UserManagementProps> = ({
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-white">User & Account Management</h1>
           <p className="mt-1 text-xs text-[#888]">
-            Authoritative provisioning center. Public registration is closed; all accounts are administered here.
+            Authoritative provisioning center. Public registration is closed; all accounts and manager assignments are controlled here.
           </p>
         </div>
         <button
@@ -269,7 +327,7 @@ export const UserManagement: React.FC<UserManagementProps> = ({
             type="text"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search users by name, email, or team..."
+            placeholder="Search users by name, email, phone, or team..."
             className="w-full bg-transparent text-xs text-white outline-none placeholder:text-[#666]"
           />
         </div>
@@ -306,9 +364,10 @@ export const UserManagement: React.FC<UserManagementProps> = ({
             <thead>
               <tr className="border-b border-[#242424] bg-[#171717] text-[11px] font-semibold uppercase tracking-wider text-[#777]">
                 <th className="py-3.5 px-5">Member</th>
-                <th className="py-3.5 px-4">Role</th>
+                <th className="py-3.5 px-4">Role / Domain</th>
                 <th className="py-3.5 px-4">Department / Team</th>
                 <th className="py-3.5 px-4">Assigned PM</th>
+                <th className="py-3.5 px-4">Phone / Telegram</th>
                 <th className="py-3.5 px-4">Status</th>
                 <th className="py-3.5 px-5 text-right">Actions</th>
               </tr>
@@ -335,13 +394,35 @@ export const UserManagement: React.FC<UserManagementProps> = ({
                       <span className="inline-block rounded-md border border-[#303030] bg-[#1a1a1a] px-2.5 py-1 text-[11px] font-medium text-[#ccc]">
                         {m.role}
                       </span>
+                      {m.specialty && (
+                        <p className="text-[10px] text-neutral-400 mt-1 font-mono">{m.specialty}</p>
+                      )}
                     </td>
                     <td className="py-4 px-4 text-[#aaa]">
                       <p>{m.team || "Unassigned"}</p>
                       <p className="text-[10px] text-[#666]">{m.department || "Organization"}</p>
                     </td>
-                    <td className="py-4 px-4 text-[#888]">
-                      {assignedPm ? assignedPm.name : m.role === "DEVELOPER" ? "None" : "—"}
+                    <td className="py-4 px-4">
+                      {assignedPm ? (
+                        <div>
+                          <p className="font-medium text-white">{assignedPm.name}</p>
+                          <p className="text-[10px] text-[#666]">{assignedPm.email}</p>
+                        </div>
+                      ) : m.role === "DEVELOPER" ? (
+                        <span className="text-amber-400/80 text-[11px]">Unassigned PM</span>
+                      ) : (
+                        <span className="text-[#666]">—</span>
+                      )}
+                    </td>
+                    <td className="py-4 px-4 text-[#aaa]">
+                      <p className="font-mono text-[11px]">{m.phoneNumber || "No phone"}</p>
+                      <span className="inline-flex items-center gap-1 text-[10px] text-[#777]">
+                        {m.telegramLinked ? (
+                          <span className="text-emerald-400 font-medium">● Telegram Linked</span>
+                        ) : (
+                          <span className="text-[#666]">○ Not Linked</span>
+                        )}
+                      </span>
                     </td>
                     <td className="py-4 px-4">
                       <span
@@ -405,9 +486,9 @@ export const UserManagement: React.FC<UserManagementProps> = ({
 
       {/* Create User Account Modal */}
       {showCreateModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm">
-          <div className="w-full max-w-xl rounded-2xl border border-[#333] bg-[#141414] p-6 shadow-2xl space-y-5">
-            <div className="flex items-center justify-between border-b border-[#262626] pb-4">
+        <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/80 p-4 pt-6 backdrop-blur-sm overflow-y-auto">
+          <div className="w-full max-w-xl rounded-2xl border border-[#333] bg-[#141414] shadow-2xl flex flex-col my-auto">
+            <div className="flex items-center justify-between border-b border-[#262626] px-6 pt-6 pb-4 shrink-0">
               <div>
                 <h3 className="text-base font-semibold text-white">Provision New Account</h3>
                 <p className="text-xs text-[#888]">
@@ -422,9 +503,10 @@ export const UserManagement: React.FC<UserManagementProps> = ({
               </button>
             </div>
 
+            <div className="overflow-y-auto px-6 pb-6 pt-4 space-y-5 flex-1">
             {createSuccessMsg ? (
               <div className="space-y-4">
-                <div className="rounded-xl border border-neutral-700 bg-neutral-900/60 p-4 text-xs text-neutral-200 leading-relaxed">
+                <div className="rounded-xl border border-neutral-700 bg-neutral-900/60 p-4 text-xs text-neutral-200 leading-relaxed whitespace-pre-wrap">
                   <div className="flex items-center gap-2 font-semibold text-white mb-2">
                     <CheckCircle2 size={16} /> User Account Provisioned Successfully
                   </div>
@@ -490,36 +572,22 @@ export const UserManagement: React.FC<UserManagementProps> = ({
 
                 <div className="grid gap-3 sm:grid-cols-2">
                   <div>
-                    <label className="block text-xs font-medium text-[#aaa] mb-1">Assigned Role</label>
+                    <label className="block text-xs font-medium text-[#aaa] mb-1">Role & Department</label>
                     <select
-                      value={assignedRole}
-                      onChange={(e) => setAssignedRole(e.target.value as UserRole)}
+                      value={unifiedRole}
+                      onChange={(e) => setUnifiedRole(e.target.value)}
                       className="w-full rounded-xl border border-[#333] bg-[#101010] px-3.5 py-2.5 text-xs text-white outline-none"
                     >
-                      {roles.map((r) => (
-                        <option key={r.id} value={r.id}>
-                          {r.name}
-                        </option>
-                      ))}
+                      <option value="Developer - Frontend">Developer - Frontend</option>
+                      <option value="Developer - Backend">Developer - Backend</option>
+                      <option value="Developer - UI/UX">Developer - UI/UX</option>
+                      <option value="Developer - AI">Developer - AI / ML</option>
+                      <option value="Developer - QA">Developer - QA</option>
+                      <option value="Manager">Manager</option>
+                      <option value="Administrator">Administrator</option>
                     </select>
                   </div>
 
-                  <div>
-                    <label className="block text-xs font-medium text-[#aaa] mb-1">Department</label>
-                    <select
-                      value={department}
-                      onChange={(e) => setDepartment(e.target.value)}
-                      className="w-full rounded-xl border border-[#333] bg-[#101010] px-3.5 py-2.5 text-xs text-white outline-none"
-                    >
-                      <option value="Engineering">Engineering</option>
-                      <option value="Product Design">Product Design</option>
-                      <option value="Applied AI">Applied AI</option>
-                      <option value="Executive">Executive Leadership</option>
-                    </select>
-                  </div>
-                </div>
-
-                <div className="grid gap-3 sm:grid-cols-2">
                   <div>
                     <label className="block text-xs font-medium text-[#aaa] mb-1">Assigned Team</label>
                     <select
@@ -532,25 +600,70 @@ export const UserManagement: React.FC<UserManagementProps> = ({
                           {t.name}
                         </option>
                       ))}
+                      <option value="Core Delivery">Core Delivery</option>
+                      <option value="General">General</option>
                     </select>
                   </div>
+                </div>
 
-                  {assignedRole === "DEVELOPER" && (
-                    <div>
-                      <label className="block text-xs font-medium text-[#aaa] mb-1">Assigned PM</label>
-                      <select
-                        value={assignedPmId || ""}
-                        onChange={(e) => setAssignedPmId(Number(e.target.value))}
-                        className="w-full rounded-xl border border-[#333] bg-[#101010] px-3.5 py-2.5 text-xs text-white outline-none"
-                      >
-                        {projectManagers.map((pm) => (
-                          <option key={pm.id} value={pm.id}>
-                            {pm.name}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                  )}
+                {unifiedRole.startsWith("Developer") && (
+                  <div>
+                    <label className="block text-xs font-medium text-[#aaa] mb-1">
+                      Assigned Project Manager
+                    </label>
+                    <select
+                      value={assignedPmId || ""}
+                      onChange={(e) => setAssignedPmId(e.target.value ? Number(e.target.value) : undefined)}
+                      className="w-full rounded-xl border border-[#333] bg-[#101010] px-3.5 py-2.5 text-xs text-white outline-none"
+                    >
+                      <option value="">No PM Assigned</option>
+                      {projectManagers.map((pm) => (
+                        <option key={pm.id} value={pm.id}>
+                          {pm.name} ({pm.email})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+
+                <div>
+                  <label className="block text-xs font-medium text-[#aaa] mb-1">Skills (comma separated)</label>
+                  <input
+                    type="text"
+                    value={skillsInput}
+                    onChange={(e) => setSkillsInput(e.target.value)}
+                    placeholder="React, Node.js, TypeScript, Docker"
+                    className="w-full rounded-xl border border-[#333] bg-[#101010] px-3.5 py-2.5 text-xs text-white outline-none focus:border-[#777]"
+                  />
+                  <p className="text-[10px] text-[#666] mt-1">
+                    Add the user's technical skills (e.g., React, Python, AWS)
+                  </p>
+                </div>
+
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div>
+                    <label className="block text-xs font-medium text-[#aaa] mb-1">
+                      Phone Number <span className="text-[10px] text-[#777]">(Telegram Auto-Linking)</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={phoneNumber}
+                      onChange={(e) => setPhoneNumber(e.target.value)}
+                      placeholder="+251911445566 or +1234567890"
+                      className="w-full rounded-xl border border-[#333] bg-[#101010] px-3.5 py-2.5 text-xs text-white outline-none focus:border-[#777]"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-medium text-[#aaa] mb-1">GitHub Username</label>
+                    <input
+                      type="text"
+                      value={githubUsername}
+                      onChange={(e) => setGithubUsername(e.target.value)}
+                      placeholder="e.g. dev-username"
+                      className="w-full rounded-xl border border-[#333] bg-[#101010] px-3.5 py-2.5 text-xs text-white outline-none focus:border-[#777]"
+                    />
+                  </div>
                 </div>
 
                 {assignedRole === "DEVELOPER" && (
@@ -610,21 +723,26 @@ export const UserManagement: React.FC<UserManagementProps> = ({
                 </div>
               </form>
             )}
+            </div>
           </div>
         </div>
       )}
 
       {/* Edit User Modal */}
       {editingUser && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm">
-          <div className="w-full max-w-lg rounded-2xl border border-[#333] bg-[#141414] p-6 shadow-2xl space-y-5">
-            <div className="flex items-center justify-between border-b border-[#262626] pb-4">
-              <h3 className="text-base font-semibold text-white">Edit User: {editingUser.name}</h3>
+        <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/80 p-4 pt-6 backdrop-blur-sm overflow-y-auto">
+          <div className="w-full max-w-lg rounded-2xl border border-[#333] bg-[#141414] shadow-2xl flex flex-col my-auto">
+            <div className="flex items-center justify-between border-b border-[#262626] px-6 pt-6 pb-4 shrink-0">
+              <div>
+                <h3 className="text-base font-semibold text-white">Edit User: {editingUser.name}</h3>
+                <p className="text-xs text-[#888]">Update role, assigned Project Manager, team, and phone number.</p>
+              </div>
               <button onClick={() => setEditingUser(null)} className="text-[#777] hover:text-white">
                 <X size={18} />
               </button>
             </div>
 
+            <div className="overflow-y-auto px-6 pb-6 pt-4 flex-1">
             <form onSubmit={handleSaveEdit} className="space-y-4">
               <div>
                 <label className="block text-xs font-medium text-[#aaa] mb-1">Full Name</label>
@@ -664,14 +782,84 @@ export const UserManagement: React.FC<UserManagementProps> = ({
                 </div>
               </div>
 
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-[#aaa] mb-1">Assigned Team</label>
+                  <input
+                    type="text"
+                    value={editingUser.team || ""}
+                    onChange={(e) => setEditingUser({ ...editingUser, team: e.target.value })}
+                    className="w-full rounded-xl border border-[#333] bg-[#101010] px-3.5 py-2.5 text-xs text-white outline-none focus:border-[#777]"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-medium text-[#aaa] mb-1">Engineering Specialty</label>
+                  <select
+                    value={editingUser.specialty || "Frontend"}
+                    onChange={(e) => setEditingUser({ ...editingUser, specialty: e.target.value })}
+                    className="w-full rounded-xl border border-[#333] bg-[#101010] px-3.5 py-2.5 text-xs text-white outline-none"
+                  >
+                    <option value="Frontend">Frontend</option>
+                    <option value="Backend">Backend</option>
+                    <option value="UI/UX">UI/UX</option>
+                    <option value="AI">AI / Machine Learning</option>
+                    <option value="QA">QA & Verification</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Assigned Project Manager Dropdown */}
               <div>
-                <label className="block text-xs font-medium text-[#aaa] mb-1">Team</label>
-                <input
-                  type="text"
-                  value={editingUser.team || ""}
-                  onChange={(e) => setEditingUser({ ...editingUser, team: e.target.value })}
-                  className="w-full rounded-xl border border-[#333] bg-[#101010] px-3.5 py-2.5 text-xs text-white outline-none focus:border-[#777]"
-                />
+                <label className="block text-xs font-medium text-[#aaa] mb-1">
+                  Assigned Project Manager (PM)
+                </label>
+                <select
+                  value={editingUser.assignedPmId ?? ""}
+                  onChange={(e) =>
+                    setEditingUser({
+                      ...editingUser,
+                      assignedPmId: e.target.value ? Number(e.target.value) : undefined,
+                    })
+                  }
+                  className="w-full rounded-xl border border-[#333] bg-[#101010] px-3.5 py-2.5 text-xs text-white outline-none"
+                >
+                  <option value="">No PM Assigned (Unassigned)</option>
+                  {projectManagers.map((pm) => (
+                    <option key={pm.id} value={pm.id}>
+                      {pm.name} ({pm.email})
+                    </option>
+                  ))}
+                </select>
+                <p className="text-[10px] text-[#666] mt-1">
+                  Assigning a PM links this developer's tasks, blocker escalations, and review workflows directly to that manager.
+                </p>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-[#aaa] mb-1">
+                    Phone Number <span className="text-[10px] text-[#777]">(Telegram Link)</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={editingUser.phoneNumber || ""}
+                    onChange={(e) => setEditingUser({ ...editingUser, phoneNumber: e.target.value })}
+                    placeholder="+251911445566"
+                    className="w-full rounded-xl border border-[#333] bg-[#101010] px-3.5 py-2.5 text-xs text-white outline-none focus:border-[#777]"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-medium text-[#aaa] mb-1">GitHub Username</label>
+                  <input
+                    type="text"
+                    value={editingUser.githubUsername || ""}
+                    onChange={(e) => setEditingUser({ ...editingUser, githubUsername: e.target.value })}
+                    placeholder="alexmercer-dev"
+                    className="w-full rounded-xl border border-[#333] bg-[#101010] px-3.5 py-2.5 text-xs text-white outline-none focus:border-[#777]"
+                  />
+                </div>
               </div>
 
               <div className="pt-2 flex justify-end gap-2">
@@ -690,6 +878,7 @@ export const UserManagement: React.FC<UserManagementProps> = ({
                 </button>
               </div>
             </form>
+            </div>
           </div>
         </div>
       )}

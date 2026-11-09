@@ -25,6 +25,7 @@ import {
   UserCheck,
   Users,
   X,
+  MoreHorizontal,
 } from "lucide-react";
 import { AuthProvider, useAuth } from "./context/AuthContext";
 import { Project, Task, TaskStatus, User, UserRole } from "./types";
@@ -69,36 +70,36 @@ import { RoleAwarePlanner } from "./components/shared/RoleAwarePlanner";
 
 // Navigation configurations for each role
 const ADMIN_NAV = [
-  { label: "Organization Overview", icon: LayoutDashboard },
-  { label: "User Management", icon: Users },
-  { label: "Roles & Permissions", icon: ShieldCheck },
-  { label: "Projects", icon: FolderKanban },
-  { label: "Teams & Departments", icon: Layers },
-  { label: "Organization Planner", icon: CalendarDays },
-  { label: "Reports & Analytics", icon: TrendingUp },
-  { label: "Activity & Audit Logs", icon: Activity },
-  { label: "Workspace Settings", icon: Settings },
-  { label: "My Profile", icon: UserCheck },
+  { label: "Organization Overview", icon: LayoutDashboard, essential: true },
+  { label: "User Management", icon: Users, essential: true },
+  { label: "Roles & Permissions", icon: ShieldCheck, essential: true },
+  { label: "Projects", icon: FolderKanban, essential: true },
+  { label: "Teams & Departments", icon: Layers, essential: false },
+  { label: "Organization Planner", icon: CalendarDays, essential: false },
+  { label: "Reports & Analytics", icon: TrendingUp, essential: false },
+  { label: "Activity & Audit Logs", icon: Activity, essential: false },
+  { label: "Workspace Settings", icon: Settings, essential: false },
+  { label: "My Profile", icon: UserCheck, essential: true },
 ];
 
 const PM_NAV = [
-  { label: "My Dashboard", icon: LayoutDashboard },
-  { label: "My Projects", icon: FolderKanban },
-  { label: "Kanban Boards", icon: ListTodo },
-  { label: "Code Reviews", icon: CheckCircle2 },
-  { label: "Team Workload", icon: Users },
-  { label: "Planner", icon: CalendarDays },
-  { label: "Reports", icon: TrendingUp },
-  { label: "My Profile", icon: UserCheck },
+  { label: "My Dashboard", icon: LayoutDashboard, essential: true },
+  { label: "My Projects", icon: FolderKanban, essential: true },
+  { label: "Kanban Boards", icon: ListTodo, essential: true },
+  { label: "Code Reviews", icon: CheckCircle2, essential: false },
+  { label: "Team Workload", icon: Users, essential: false },
+  { label: "Planner", icon: CalendarDays, essential: false },
+  { label: "Reports", icon: TrendingUp, essential: false },
+  { label: "My Profile", icon: UserCheck, essential: true },
 ];
 
 const DEV_NAV = [
-  { label: "My Dashboard", icon: LayoutDashboard },
-  { label: "My Tasks", icon: ListTodo },
-  { label: "My Kanban Board", icon: FolderKanban },
-  { label: "My Planner", icon: CalendarDays },
-  { label: "GitHub Activity", icon: GitBranch },
-  { label: "My Profile", icon: UserCheck },
+  { label: "My Dashboard", icon: LayoutDashboard, essential: true },
+  { label: "My Tasks", icon: ListTodo, essential: true },
+  { label: "My Kanban Board", icon: FolderKanban, essential: true },
+  { label: "My Planner", icon: CalendarDays, essential: false },
+  { label: "GitHub Activity", icon: GitBranch, essential: false },
+  { label: "My Profile", icon: UserCheck, essential: true },
 ];
 
 function MainWorkspace() {
@@ -125,30 +126,11 @@ function MainWorkspace() {
     else setActiveTab("My Dashboard");
   }, [normalizedRole]);
 
-  // Projects & Tasks State
-  const [projects, setProjects] = useState<Project[]>([
-    {
-      id: 1,
-      name: "Enterprise Cloud Hub",
-      description: "Scalable cloud orchestration gateway and role management platform.",
-      status: "ACTIVE",
-      techStack: "React, Node.js, TypeORM",
-      deadline: "2026-11-20",
-      createdAt: "2026-10-15T00:00:00Z",
-    },
-    {
-      id: 2,
-      name: "AI Telemetry & Workflow Pipeline",
-      description: "Automated task decomposition engine and developer skill telemetry matching.",
-      status: "ACTIVE",
-      techStack: "Python, FastAPI, NLP",
-      deadline: "2026-11-28",
-      createdAt: "2026-10-20T00:00:00Z",
-    },
-  ]);
-
-  const [tasks, setTasks] = useState<Task[]>(getStoredTasks);
+  // Projects & Tasks State - Clean Enterprise Initial State
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [tasks, setTasks] = useState<Task[]>([]);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [showMoreNav, setShowMoreNav] = useState(false);
 
   // Modals state
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
@@ -163,24 +145,101 @@ function MainWorkspace() {
   const [loginError, setLoginError] = useState("");
   const [loggingIn, setLoggingIn] = useState(false);
 
-  // Fetch real projects from API if token available
-  const fetchApiProjects = async () => {
+  // Synchronize all live data (projects, AI tasks, developer assignments) from backend
+  const fetchAllData = async () => {
+    if (!token) return;
     try {
-      const res = await API.get("/projects");
-      const list = res.data?.data || res.data;
-      if (Array.isArray(list) && list.length > 0) {
-        setProjects(list);
+      if (normalizedRole === "DEVELOPER") {
+        const res = await API.get("/me/tasks");
+        const devTasks = res.data?.tasks || [];
+        const board = res.data?.board || [];
+
+        const mappedTasks: Task[] = devTasks.map((t: any) => ({
+          id: t.id,
+          projectId: t.projectId,
+          projectName: t.projectName || "Enterprise Project",
+          title: t.title,
+          description: t.description || "",
+          status: t.status || "TODO",
+          priority: "MEDIUM",
+          requiredRole: t.role || "frontend",
+          assigneeId: user?.id,
+          assignee: user
+            ? {
+                id: user.id,
+                name: user.name,
+                email: user.email,
+                avatar: user.name.slice(0, 2).toUpperCase(),
+                specialty: user.specialty,
+              }
+            : undefined,
+          dueDate: t.deadline ? t.deadline.slice(0, 10) : undefined,
+          githubRepoUrl: t.repoUrl,
+        }));
+        setTasks(mappedTasks);
+        saveStoredTasks(mappedTasks);
+
+        if (board.length > 0) {
+          const mappedProjects: Project[] = board.map((b: any) => ({
+            id: b.projectId,
+            name: b.projectName || `Project #${b.projectId}`,
+            description: "Active enterprise project",
+            status: "ACTIVE",
+            deadline: b.deadline ? b.deadline.slice(0, 10) : undefined,
+            repoUrl: b.repoUrl,
+            createdAt: new Date().toISOString(),
+          }));
+          setProjects(mappedProjects);
+        }
+      } else {
+        const res = await API.get("/projects");
+        const list: any[] = res.data?.data || res.data || [];
+        if (Array.isArray(list)) {
+          setProjects(list);
+
+          const allTasks: Task[] = [];
+          for (const proj of list) {
+            if (Array.isArray(proj.tasks)) {
+              for (const t of proj.tasks) {
+                allTasks.push({
+                  id: t.id,
+                  projectId: proj.id,
+                  projectName: proj.name,
+                  title: t.title,
+                  description: t.description || "",
+                  status: t.status || "TODO",
+                  priority: "MEDIUM",
+                  requiredRole: t.requiredRole || "frontend",
+                  assigneeId: t.assigneeId || (t.assignee ? t.assignee.id : undefined),
+                  assignee: t.assignee
+                    ? {
+                        id: t.assignee.id,
+                        name: t.assignee.name,
+                        email: t.assignee.email || "",
+                        avatar: t.assignee.name ? t.assignee.name.slice(0, 2).toUpperCase() : "DEV",
+                        specialty: t.assignee.specialty,
+                      }
+                    : undefined,
+                  dueDate: t.deadline ? (typeof t.deadline === "string" ? t.deadline.slice(0, 10) : new Date(t.deadline).toISOString().slice(0, 10)) : undefined,
+                  githubRepoUrl: proj.repositories?.[0]?.url,
+                });
+              }
+            }
+          }
+          setTasks(allTasks);
+          saveStoredTasks(allTasks);
+        }
       }
-    } catch {
-      // Offline fallback already loaded
+    } catch (err) {
+      console.error("fetchAllData error:", err);
     }
   };
 
   useEffect(() => {
     if (token) {
-      fetchApiProjects();
+      fetchAllData();
     }
-  }, [token]);
+  }, [token, normalizedRole]);
 
   const handleUpdateTask = (updated: Task) => {
     const updatedList = tasks.map((t) => (t.id === updated.id ? updated : t));
@@ -188,7 +247,7 @@ function MainWorkspace() {
     saveStoredTasks(updatedList);
     setSelectedTask(updated);
 
-    // Call backend patch if available
+    // Call backend patch
     API.patch(`/tasks/${updated.id}/status`, { status: updated.status }).catch(() => undefined);
   };
 
@@ -198,8 +257,35 @@ function MainWorkspace() {
     saveStoredTasks(updated);
   };
 
-  const handleProjectCreated = (newProj: Project) => {
-    setProjects([newProj, ...projects]);
+  const handleProjectCreated = (newProj: Project, newTasks?: any[]) => {
+    setProjects((prev) => [newProj, ...prev.filter((p) => p.id !== newProj.id)]);
+    if (newTasks && newTasks.length > 0) {
+      const mappedNewTasks: Task[] = newTasks.map((t: any) => ({
+        id: t.id,
+        projectId: newProj.id,
+        projectName: newProj.name,
+        title: t.title,
+        description: t.description || "",
+        status: t.status || "TODO",
+        priority: "MEDIUM",
+        requiredRole: t.requiredRole || "frontend",
+        assigneeId: t.assigneeId,
+        assignee: allUsers.find((u) => u.id === t.assigneeId)
+          ? {
+              id: t.assigneeId,
+              name: allUsers.find((u) => u.id === t.assigneeId)!.name,
+              email: allUsers.find((u) => u.id === t.assigneeId)!.email,
+              avatar: allUsers.find((u) => u.id === t.assigneeId)!.name.slice(0, 2).toUpperCase(),
+              specialty: allUsers.find((u) => u.id === t.assigneeId)!.specialty,
+            }
+          : undefined,
+        dueDate: t.deadline
+          ? (typeof t.deadline === "string" ? t.deadline.slice(0, 10) : new Date(t.deadline).toISOString().slice(0, 10))
+          : undefined,
+      }));
+      setTasks((prev) => [...mappedNewTasks, ...prev.filter((tk) => !mappedNewTasks.some((m) => m.id === tk.id))]);
+    }
+    fetchAllData();
   };
 
   const handleLoginSubmit = async (e: React.FormEvent) => {
@@ -327,29 +413,46 @@ function MainWorkspace() {
               : "Developer Station"}
           </div>
 
-          {navItems.map((item) => {
-            const Icon = item.icon;
-            const isActive = activeTab === item.label;
+          {navItems
+            .filter((item) => item.essential !== false || showMoreNav)
+            .map((item) => {
+              const Icon = item.icon;
+              const isActive = activeTab === item.label;
 
-            return (
-              <button
-                key={item.label}
-                onClick={() => {
-                  setActiveTab(item.label);
-                  setMobileMenuOpen(false);
-                }}
-                className={`flex w-full items-center gap-3 rounded-xl px-3.5 py-2.5 text-xs font-medium transition ${
-                  isActive
-                    ? "bg-[#252525] text-white font-semibold shadow-sm"
-                    : "text-[#888] hover:bg-[#181818] hover:text-[#ddd]"
-                }`}
-              >
-                <Icon size={16} strokeWidth={isActive ? 2.2 : 1.8} />
-                <span>{item.label}</span>
-                {isActive && <span className="ml-auto h-1.5 w-1.5 rounded-full bg-white" />}
-              </button>
-            );
-          })}
+              return (
+                <button
+                  key={item.label}
+                  onClick={() => {
+                    setActiveTab(item.label);
+                    setMobileMenuOpen(false);
+                  }}
+                  className={`flex w-full items-center gap-3 rounded-xl px-3.5 py-2.5 text-xs font-medium transition ${
+                    isActive
+                      ? "bg-[#252525] text-white font-semibold shadow-sm"
+                      : "text-[#888] hover:bg-[#181818] hover:text-[#ddd]"
+                  }`}
+                >
+                  <Icon size={16} strokeWidth={isActive ? 2.2 : 1.8} />
+                  <span>{item.label}</span>
+                  {isActive && <span className="ml-auto h-1.5 w-1.5 rounded-full bg-white" />}
+                </button>
+              );
+            })}
+
+          {/* More button for non-essential items */}
+          {navItems.some((item) => item.essential === false) && (
+            <button
+              onClick={() => setShowMoreNav(!showMoreNav)}
+              className={`flex w-full items-center gap-3 rounded-xl px-3.5 py-2.5 text-xs font-medium transition ${
+                showMoreNav
+                  ? "bg-[#1a1a1a] text-white"
+                  : "text-[#888] hover:bg-[#181818] hover:text-[#ddd]"
+              }`}
+            >
+              <ChevronDown size={16} className={`transition-transform ${showMoreNav ? "rotate-180" : ""}`} />
+              <span>{showMoreNav ? "Show Less" : "More"}</span>
+            </button>
+          )}
         </div>
 
         {/* User Identity Footer */}
@@ -462,7 +565,7 @@ function MainWorkspace() {
                 <PMProjects
                   projects={projects}
                   tasks={tasks}
-                  onRefreshProjects={fetchApiProjects}
+                  onRefreshProjects={fetchAllData}
                   onOpenCreateModal={() => setShowCreateProject(true)}
                 />
               )}
@@ -507,7 +610,7 @@ function MainWorkspace() {
                 <PMProjects
                   projects={projects}
                   tasks={tasks}
-                  onRefreshProjects={fetchApiProjects}
+                  onRefreshProjects={fetchAllData}
                   onOpenCreateModal={() => setShowCreateProject(true)}
                 />
               )}

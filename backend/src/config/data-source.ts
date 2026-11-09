@@ -2,8 +2,22 @@ import "reflect-metadata";
 import { DataSource } from "typeorm";
 import dotenv from "dotenv";
 import path from "path";
+import fs from "fs";
 
-dotenv.config();
+// Load .env from: backend/.env -> project root/.env -> default
+const localEnv = path.resolve(process.cwd(), ".env");
+const parentEnv = path.resolve(process.cwd(), "..", ".env");
+const srcRootEnv = path.resolve(__dirname, "../../../.env");
+
+if (fs.existsSync(localEnv)) {
+  dotenv.config({ path: localEnv });
+} else if (fs.existsSync(parentEnv)) {
+  dotenv.config({ path: parentEnv });
+} else if (fs.existsSync(srcRootEnv)) {
+  dotenv.config({ path: srcRootEnv });
+} else {
+  dotenv.config();
+}
 
 const isProduction = process.env.NODE_ENV === "production";
 

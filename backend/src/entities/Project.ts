@@ -22,6 +22,9 @@ export class Project {
   @Column()
   orgId!: number;
 
+  @Column({ type: "int", nullable: true })
+  pmId!: number | null;
+
   @ManyToOne(() => Organization, (org) => org.projects, { onDelete: "CASCADE" })
   @JoinColumn({ name: "org_id" })
   organization!: Organization;

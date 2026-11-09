@@ -93,6 +93,7 @@ class ProjectController {
             }
             const project = projectRepo.create({
                 orgId,
+                pmId: user.id,
                 name,
                 description,
                 status: Project_1.ProjectStatus.ACTIVE,
@@ -120,7 +121,7 @@ class ProjectController {
                 deadline: parsed.date,
                 requirements: project.requirements,
                 repoUrl: chosenRepo,
-            });
+            }, user.id);
             await AuditService_1.AuditService.log(orgId, user.id, "CREATE_WITH_AI", "Project", project.id, `Created project ${name} and auto-generated ${assignedTasks.length} AI tasks`);
             const publicBase = (process.env.BACKEND_PUBLIC_URL || `http://localhost:${process.env.PORT || 3000}`).replace(/\/+$/, "");
             res.status(201).json({
