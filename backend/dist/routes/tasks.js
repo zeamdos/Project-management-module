@@ -1,0 +1,13 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+const express_1 = require("express");
+const taskController_1 = require("../controllers/taskController");
+const workflowController_1 = require("../controllers/workflowController");
+const auth_1 = require("../middleware/auth");
+const User_1 = require("../entities/User");
+const router = (0, express_1.Router)();
+router.post("/", auth_1.authenticate, (0, auth_1.requireRole)(User_1.UserRole.ADMIN, User_1.UserRole.MANAGER, User_1.UserRole.TEAM_LEAD), taskController_1.TaskController.create);
+router.patch("/:id/status", auth_1.authenticate, taskController_1.TaskController.updateStatus);
+router.post("/:id/review", auth_1.authenticate, workflowController_1.WorkflowController.submitReview);
+router.patch("/:id/assign", auth_1.authenticate, (0, auth_1.requireRole)(User_1.UserRole.ADMIN, User_1.UserRole.MANAGER, User_1.UserRole.TEAM_LEAD), workflowController_1.WorkflowController.assign);
+exports.default = router;
