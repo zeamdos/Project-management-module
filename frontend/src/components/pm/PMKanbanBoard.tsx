@@ -16,7 +16,6 @@ import {
 } from "lucide-react";
 import { Project, Task, TaskPriority, TaskStatus, User } from "../../types";
 import { useAuth } from "../../context/AuthContext";
-import { addAuditLog } from "../../services/mockDataStore";
 
 interface PMKanbanBoardProps {
   tasks: Task[];
@@ -43,7 +42,7 @@ export const PMKanbanBoard: React.FC<PMKanbanBoardProps> = ({
   onUpdateTask,
   onOpenCreateTask,
 }) => {
-  const { user, checkPermission } = useAuth();
+  const { checkPermission } = useAuth();
   const [search, setSearch] = useState("");
   const [projectFilter, setProjectFilter] = useState<string>("ALL");
   const [assigneeFilter, setAssigneeFilter] = useState<string>("ALL");
@@ -85,9 +84,6 @@ export const PMKanbanBoard: React.FC<PMKanbanBoardProps> = ({
         status: newStatus,
         updatedAt: new Date().toISOString(),
       };
-      if (user) {
-        addAuditLog(user, "KANBAN_MOVE", "Task", task.id, `Moved from ${task.status} to ${newStatus}`);
-      }
       onUpdateTask(updated);
     }
   };

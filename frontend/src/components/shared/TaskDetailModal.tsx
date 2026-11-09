@@ -17,7 +17,6 @@ import {
 } from "lucide-react";
 import { Task, TaskPriority, TaskStatus, User } from "../../types";
 import { useAuth } from "../../context/AuthContext";
-import { addAuditLog, addNotification } from "../../services/mockDataStore";
 
 interface TaskDetailModalProps {
   task: Task | null;
@@ -67,9 +66,6 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
       ],
     };
 
-    if (user) {
-      addAuditLog(user, "TASK_STATUS_CHANGE", "Task", task.id, `Status updated to ${newStatus}`);
-    }
     onUpdateTask(updated);
   };
 
@@ -101,18 +97,6 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
       ],
     };
 
-    addNotification(
-      selectedUser.id,
-      "Task Assigned",
-      `You have been assigned to task "${task.title}"`,
-      "TASK",
-      `task-${task.id}`
-    );
-
-    if (user) {
-      addAuditLog(user, "TASK_REASSIGN", "Task", task.id, `Reassigned to ${selectedUser.name}`);
-    }
-
     onUpdateTask(updated);
   };
 
@@ -135,17 +119,6 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
       ...task,
       comments: [...(task.comments || []), newComment],
     };
-
-    // If developer commented, notify assigned PM
-    if (user.role === "DEVELOPER" && task.createdById) {
-      addNotification(
-        task.createdById,
-        "New Task Discussion",
-        `${user.name} commented on "${task.title}": ${commentText.slice(0, 60)}...`,
-        "TASK",
-        `task-${task.id}`
-      );
-    }
 
     setCommentText("");
     onUpdateTask(updated);
@@ -182,21 +155,6 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
       ],
     };
 
-    // Notify PMs and Admins of blocker
-    allUsers
-      .filter((u) => ["ADMIN", "MANAGER", "PROJECT_MANAGER"].includes(u.role.toUpperCase()))
-      .forEach((lead) => {
-        addNotification(
-          lead.id,
-          "Critical Blocker Reported",
-          `${user.name} reported a blocker on "${task.title}": ${blockerText.trim()}`,
-          "BLOCKER",
-          `task-${task.id}`
-        );
-      });
-
-    addAuditLog(user, "BLOCKER_REPORTED", "Task", task.id, `Blocker: ${blockerText.trim()}`);
-
     setBlockerText("");
     setShowBlockerInput(false);
     onUpdateTask(updated);
@@ -223,17 +181,6 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
       ],
     };
 
-    if (task.assigneeId) {
-      addNotification(
-        task.assigneeId,
-        "Blocker Resolved",
-        `Your blocker on "${task.title}" was resolved by ${user.name}. You may proceed with the task.`,
-        "PROGRESS",
-        `task-${task.id}`
-      );
-    }
-
-    addAuditLog(user, "BLOCKER_RESOLVED", "Task", task.id, "Blocker cleared");
     onUpdateTask(updated);
   };
 
@@ -273,26 +220,6 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
         },
       ],
     };
-
-    if (task.assigneeId) {
-      addNotification(
-        task.assigneeId,
-        isApprove ? "Task Review Approved" : "Changes Requested on Task",
-        isApprove
-          ? `Great job! Your work on "${task.title}" has been approved and moved to Done.`
-          : `Review feedback on "${task.title}": ${reviewNote.trim() || "Please make required changes."}`,
-        "REVIEW",
-        `task-${task.id}`
-      );
-    }
-
-    addAuditLog(
-      user,
-      isApprove ? "REVIEW_APPROVED" : "CHANGES_REQUESTED",
-      "Task",
-      task.id,
-      `Review verdict: ${decision}`
-    );
 
     setShowReviewInput(null);
     setReviewNote("");

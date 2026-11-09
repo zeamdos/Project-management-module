@@ -29,7 +29,6 @@ import {
 } from "../../services/permissions";
 import { PermissionKey, RoleDefinition, User, UserPermissionOverride } from "../../types";
 import { useAuth } from "../../context/AuthContext";
-import { addAuditLog, getStoredUsers } from "../../services/mockDataStore";
 
 interface RolesPermissionsProps {
   initialSelectedUser?: User | null;
@@ -38,12 +37,12 @@ interface RolesPermissionsProps {
 export const RolesPermissions: React.FC<RolesPermissionsProps> = ({
   initialSelectedUser,
 }) => {
-  const { user: currentUser } = useAuth();
+  const { allUsers } = useAuth();
   const [mode, setMode] = useState<"ROLE" | "USER">(initialSelectedUser ? "USER" : "ROLE");
   const [roles, setRoles] = useState<RoleDefinition[]>(getRoles);
   const [selectedRoleId, setSelectedRoleId] = useState<string>("PROJECT_MANAGER");
 
-  const [usersList] = useState<User[]>(getStoredUsers);
+  const usersList = allUsers;
   const [selectedUserId, setSelectedUserId] = useState<number>(
     initialSelectedUser?.id || usersList[3]?.id || 4
   );
@@ -97,16 +96,6 @@ export const RolesPermissions: React.FC<RolesPermissionsProps> = ({
 
     setRoles(updatedRoles);
     saveRoles(updatedRoles);
-
-    if (currentUser) {
-      addAuditLog(
-        currentUser,
-        "ROLE_PERMISSION_MUTATED",
-        "Role",
-        currentRole.id,
-        `${has ? "Revoked" : "Granted"} ${permKey} on role ${currentRole.name}`
-      );
-    }
   };
 
   // Toggle individual user override
@@ -142,16 +131,6 @@ export const RolesPermissions: React.FC<RolesPermissionsProps> = ({
 
     saveUserOverride(nextOverride);
     setUserOverrides({ ...userOverrides, [selectedUser.id]: nextOverride });
-
-    if (currentUser) {
-      addAuditLog(
-        currentUser,
-        "USER_OVERRIDE_MUTATED",
-        "UserOverride",
-        selectedUser.id,
-        `Permission override set for ${selectedUser.name}: ${permKey}`
-      );
-    }
   };
 
   const handleClearUserOverrides = () => {
@@ -159,16 +138,6 @@ export const RolesPermissions: React.FC<RolesPermissionsProps> = ({
     const updated = { ...userOverrides };
     delete updated[selectedUser.id];
     setUserOverrides(updated);
-
-    if (currentUser) {
-      addAuditLog(
-        currentUser,
-        "USER_OVERRIDES_RESET",
-        "UserOverride",
-        selectedUser.id,
-        `Cleared all permission overrides for ${selectedUser.name}`
-      );
-    }
   };
 
   const handleCreateCustomRole = (e: React.FormEvent) => {
@@ -194,16 +163,6 @@ export const RolesPermissions: React.FC<RolesPermissionsProps> = ({
     setNewRoleName("");
     setNewRoleDesc("");
 
-    if (currentUser) {
-      addAuditLog(
-        currentUser,
-        "CUSTOM_ROLE_CREATED",
-        "Role",
-        roleId,
-        `Created custom role ${newRole.name}`
-      );
-    }
-
     setSaveSuccessMsg(`Custom role "${newRole.name}" created and configured.`);
     setTimeout(() => setSaveSuccessMsg(""), 3500);
   };
@@ -218,32 +177,12 @@ export const RolesPermissions: React.FC<RolesPermissionsProps> = ({
     setRoles(updated);
     saveRoles(updated);
     setSelectedRoleId("DEVELOPER");
-
-    if (currentUser) {
-      addAuditLog(
-        currentUser,
-        "CUSTOM_ROLE_DELETED",
-        "Role",
-        roleId,
-        `Deleted custom role ${roleToDelete.name}`
-      );
-    }
   };
 
   const handleRestoreDefaults = () => {
     if (!confirm("Reset all roles to their standard factory permissions? Custom roles will be preserved.")) return;
     const restored = resetRolesToDefault();
     setRoles(restored);
-
-    if (currentUser) {
-      addAuditLog(
-        currentUser,
-        "ROLES_RESET_DEFAULT",
-        "Role",
-        "ALL",
-        "Restored default role permissions matrix"
-      );
-    }
 
     setSaveSuccessMsg("Default role permissions restored.");
     setTimeout(() => setSaveSuccessMsg(""), 3500);

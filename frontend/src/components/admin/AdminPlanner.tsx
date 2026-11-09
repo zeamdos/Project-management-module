@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   Calendar,
   ChevronLeft,
@@ -14,20 +14,16 @@ import {
   X,
 } from "lucide-react";
 import { PlannerEvent, Project } from "../../types";
-import { useAuth } from "../../context/AuthContext";
-import {
-  addAuditLog,
-  addPlannerEvent,
-  getStoredPlannerEvents,
-} from "../../services/mockDataStore";
+import API from "../../services/api";
 
 interface AdminPlannerProps {
   projects: Project[];
 }
 
 export const AdminPlanner: React.FC<AdminPlannerProps> = ({ projects }) => {
-  const { user: currentUser } = useAuth();
-  const [events, setEvents] = useState<PlannerEvent[]>(getStoredPlannerEvents);
+  const [events, setEvents] = useState<PlannerEvent[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [typeFilter, setTypeFilter] = useState<string>("ALL");
   const [projectFilter, setProjectFilter] = useState<string>("ALL");
 
@@ -39,36 +35,58 @@ export const AdminPlanner: React.FC<AdminPlannerProps> = ({ projects }) => {
   const [isOrgWide, setIsOrgWide] = useState(true);
   const [desc, setDesc] = useState("");
 
-  const handleCreateEvent = (e: React.FormEvent) => {
+  const mapEvent = (e: any): PlannerEvent => ({
+    id: String(e.id),
+    title: e.title,
+    date: e.date,
+    endDate: e.endDate,
+    type: e.type,
+    projectId: e.projectId,
+    projectName: e.projectName,
+    assigneeId: e.assigneeId,
+    isOrganizationWide: e.isOrganizationWide ?? false,
+    description: e.description,
+  });
+
+  useEffect(() => {
+    API.get("/planner")
+      .then((res) => {
+        const raw = res.data?.events ?? res.data ?? [];
+        setEvents(Array.isArray(raw) ? raw.map(mapEvent) : []);
+      })
+      .catch((err) => {
+        console.error("Failed to load planner events:", err);
+        setError("Failed to load planner events.");
+      })
+      .finally(() => setLoading(false));
+  }, []);
+
+  const handleCreateEvent = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!title || !date) return;
 
     const matchedProject = projects.find((p) => p.id === projectId);
 
-    const created = addPlannerEvent({
-      title: title.trim(),
-      date,
-      type,
-      projectId,
-      projectName: matchedProject ? matchedProject.name : undefined,
-      isOrganizationWide: isOrgWide,
-      description: desc.trim() || undefined,
-    });
+    try {
+      const res = await API.post("/planner", {
+        title: title.trim(),
+        date,
+        type,
+        projectId,
+        projectName: matchedProject ? matchedProject.name : undefined,
+        isOrganizationWide: isOrgWide,
+        description: desc.trim() || undefined,
+      });
 
-    setEvents(getStoredPlannerEvents());
-    setShowCreateModal(false);
-    setTitle("");
-    setDate("");
-    setDesc("");
-
-    if (currentUser) {
-      addAuditLog(
-        currentUser,
-        "PLANNER_EVENT_CREATED",
-        "PlannerEvent",
-        created.id,
-        `Created organization milestone "${created.title}" for ${created.date}`
-      );
+      const created = mapEvent(res.data?.event ?? res.data);
+      setEvents((prev) => [...prev, created]);
+      setShowCreateModal(false);
+      setTitle("");
+      setDate("");
+      setDesc("");
+    } catch (err) {
+      console.error("Failed to create planner event:", err);
+      setError("Failed to create planner event.");
     }
   };
 
@@ -141,7 +159,22 @@ export const AdminPlanner: React.FC<AdminPlannerProps> = ({ projects }) => {
         </span>
       </div>
 
+      {/* Error banner */}
+      {error && (
+        <div className="rounded-2xl border border-red-900/60 bg-red-950/30 px-4 py-3 text-xs text-red-300">
+          {error}
+        </div>
+      )}
+
+      {/* Loading state */}
+      {loading && (
+        <div className="rounded-2xl border border-[#262626] bg-[#141414] p-12 text-center text-xs text-[#666]">
+          Loading planner events...
+        </div>
+      )}
+
       {/* Timeline & Agenda Cards */}
+      {!loading && (
       <div className="space-y-4">
         {sortedEvents.map((event) => {
           const eventDate = new Date(event.date);
@@ -232,6 +265,7 @@ export const AdminPlanner: React.FC<AdminPlannerProps> = ({ projects }) => {
           </div>
         )}
       </div>
+      )}
 
       {/* Schedule Milestone Modal */}
       {showCreateModal && (

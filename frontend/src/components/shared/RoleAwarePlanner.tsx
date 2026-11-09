@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   CalendarDays,
   CheckCircle2,
@@ -12,8 +12,7 @@ import {
 } from "lucide-react";
 import { PlannerEvent, Project, Task } from "../../types";
 import { useAuth } from "../../context/AuthContext";
-import { getStoredPlannerEvents, saveStoredPlannerEvents } from "../../services/mockDataStore";
-import { fetchPlannerEventsList } from "../../services/apiClient";
+import API from "../../services/api";
 
 interface RoleAwarePlannerProps {
   tasks: Task[];
@@ -32,23 +31,37 @@ export const RoleAwarePlanner: React.FC<RoleAwarePlannerProps> = ({
   const isPM = role === "MANAGER" || role === "PROJECT_MANAGER";
   const isDev = role === "DEVELOPER" || role === "SENIOR_DEVELOPER";
 
-  const [plannerEvents, setPlannerEvents] = useState<PlannerEvent[]>(() => getStoredPlannerEvents());
+  const [plannerEvents, setPlannerEvents] = useState<PlannerEvent[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  // Try to fetch planner events from the backend on mount
-  useState(() => {
-    fetchPlannerEventsList()
+  // Fetch planner events from the backend on mount
+  useEffect(() => {
+    API.get("/planner")
       .then((res) => {
-        const data = res.data || res;
-        const events: PlannerEvent[] = Array.isArray(data) ? data : (data.events || []);
+        const raw = res.data?.events ?? res.data ?? [];
+        const events: PlannerEvent[] = Array.isArray(raw)
+          ? raw.map((e: any) => ({
+              id: String(e.id),
+              title: e.title,
+              date: e.date,
+              endDate: e.endDate,
+              type: e.type,
+              projectId: e.projectId,
+              projectName: e.projectName,
+              assigneeId: e.assigneeId,
+              isOrganizationWide: e.isOrganizationWide ?? false,
+              description: e.description,
+            }))
+          : [];
         setPlannerEvents(events);
-        saveStoredPlannerEvents(events);
       })
-      .catch(() => {
-        // Keep local fallback if backend is not ready
+      .catch((err) => {
+        console.error("Failed to load planner events:", err);
+        setError("Failed to load planner events.");
       })
       .finally(() => setLoading(false));
-  });
+  }, []);
 
   const allOrgEvents = plannerEvents;
 
@@ -153,7 +166,22 @@ export const RoleAwarePlanner: React.FC<RoleAwarePlannerProps> = ({
         </p>
       </div>
 
+      {/* Error banner */}
+      {error && (
+        <div className="rounded-xl border border-red-900/60 bg-red-950/30 px-4 py-3 text-xs text-red-300">
+          {error}
+        </div>
+      )}
+
+      {/* Loading state */}
+      {loading && (
+        <div className="rounded-xl border border-[#262626] bg-[#141414] p-12 text-center text-xs text-[#666]">
+          Loading planner events...
+        </div>
+      )}
+
       {/* Agenda Timeline List */}
+      {!loading && (
       <div className="space-y-3">
         {visibleItems.map((item) => {
           const itemDate = new Date(item.date);
@@ -229,6 +257,7 @@ export const RoleAwarePlanner: React.FC<RoleAwarePlannerProps> = ({
           </p>
         )}
       </div>
+      )}
     </div>
   );
 };

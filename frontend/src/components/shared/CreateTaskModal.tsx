@@ -3,7 +3,6 @@ import { ListTodo, Plus, Trash2, X } from "lucide-react";
 import { Project, Task, TaskPriority, TaskStatus, User } from "../../types";
 import { useAuth } from "../../context/AuthContext";
 import { createNewTask } from "../../services/apiClient";
-import { addAuditLog, addNotification } from "../../services/mockDataStore";
 
 interface CreateTaskModalProps {
   projects: Project[];
@@ -54,7 +53,6 @@ export const CreateTaskModal: React.FC<CreateTaskModalProps> = ({
     if (!title.trim() || !projectId) return;
 
     const matchedProject = projects.find((p) => p.id === projectId);
-    const assignedUser = users.find((u) => u.id === assigneeId);
 
     try {
       const created = await createNewTask({
@@ -71,20 +69,6 @@ export const CreateTaskModal: React.FC<CreateTaskModalProps> = ({
           .map((l) => l.trim().toLowerCase())
           .filter(Boolean),
       });
-
-      if (assignedUser) {
-        addNotification(
-          assignedUser.id,
-          "New Task Assignment",
-          `You have been assigned to task "${created.title}" in ${created.projectName}`,
-          "TASK",
-          `task-${created.id}`
-        );
-      }
-
-      if (user) {
-        addAuditLog(user, "TASK_CREATED", "Task", created.id, `Created task "${created.title}"`);
-      }
 
       onTaskCreated(created);
       onClose();

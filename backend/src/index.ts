@@ -35,6 +35,8 @@ import { DeveloperController } from "./controllers/developerController";
 import { WorkflowController } from "./controllers/workflowController";
 import { ProgressController } from "./controllers/progressController";
 import { AdminController } from "./controllers/adminController";
+import { PlannerController } from "./controllers/plannerController";
+import { AuditController } from "./controllers/auditController";
 import { authenticate, requireRole } from "./middleware/auth";
 import { User, UserRole, UserStatus } from "./entities/User";
 import { Organization } from "./entities/Organization";
@@ -51,12 +53,7 @@ const app = express();
 app.use(helmet());
 app.use(
   cors({
-    origin: [
-      process.env.FRONTEND_URL || "http://localhost:5173",
-      "http://localhost:5173",
-      "http://localhost:3001",
-      "http://localhost:3000",
-    ],
+    origin: "*", // Allow all origins for development
     credentials: true,
   })
 );
@@ -115,6 +112,8 @@ app.delete("/api/projects/:id", authenticate, requireRole(UserRole.ADMIN, UserRo
 
 // Task Routes
 app.post("/api/tasks", authenticate, requireRole(UserRole.ADMIN, UserRole.MANAGER, UserRole.TEAM_LEAD), TaskController.create);
+app.get("/api/tasks", authenticate, TaskController.list);
+app.patch("/api/tasks/:id", authenticate, TaskController.update);
 app.patch("/api/tasks/:id/status", authenticate, TaskController.updateStatus);
 
 // Review and reassignment (the controller checks who may review which task)
@@ -134,6 +133,13 @@ app.get("/api/tasks/:taskId/suggest-assignee", authenticate, requireRole(UserRol
 
 // Dashboard Routes
 app.get("/api/projects/:projectId/health", authenticate, DashboardController.getProjectHealth);
+
+// Planner Routes
+app.get("/api/planner", authenticate, PlannerController.getEvents);
+app.post("/api/planner", authenticate, PlannerController.addEvent);
+
+// Audit Routes
+app.get("/api/admin/audit", authenticate, requireRole(UserRole.ADMIN), AuditController.getAuditLogs);
 
 const PORT = process.env.PORT || 3000;
 

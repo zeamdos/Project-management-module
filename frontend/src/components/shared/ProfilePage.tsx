@@ -1,7 +1,6 @@
 import React, { useState } from "react";
 import { CheckCircle2, GitBranch, Key, Phone, Send } from "lucide-react";
 import { useAuth } from "../../context/AuthContext";
-import { addAuditLog } from "../../services/mockDataStore";
 
 export const ProfilePage: React.FC = () => {
   const { user, updateUser } = useAuth();
@@ -35,7 +34,6 @@ export const ProfilePage: React.FC = () => {
       notifyEmail,
     });
 
-    addAuditLog(user, "PROFILE_UPDATED", "User", user.id, "User updated personal profile & notifications");
     setSavedMsg("Profile settings saved successfully.");
     setTimeout(() => setSavedMsg(""), 3500);
   };
@@ -52,9 +50,6 @@ export const ProfilePage: React.FC = () => {
       return;
     }
 
-    if (user) {
-      addAuditLog(user, "PASSWORD_CHANGED", "User", user.id, "User changed account password");
-    }
     setCurrentPassword("");
     setNewPassword("");
     setConfirmPassword("");

@@ -16,7 +16,6 @@ import API, {
   login,
   markAllNotificationsRead,
   markNotificationRead,
-  register,
   resetPassword,
   updateProject,
   updateTaskField,
@@ -25,7 +24,21 @@ import API, {
   submitReview,
 } from "./api";
 
-import { NotificationItem, PlannerEvent } from "../types";
+import { PlannerEvent } from "../types";
+
+/**
+ * The backend and the axios helpers in ./api don't always return the same shape
+ * (plain array, axios response, or an object like { users: [...] }).
+ * This normalises all of them into an array so callers never crash on `.map`.
+ */
+export function unwrapList<T = any>(res: any, key?: string): T[] {
+  if (Array.isArray(res)) return res as T[];
+  const body = res && typeof res === "object" && "data" in res ? res.data : res;
+  if (Array.isArray(body)) return body as T[];
+  if (key && body && Array.isArray(body[key])) return body[key] as T[];
+  if (body && Array.isArray(body.items)) return body.items as T[];
+  return [];
+}
 
 /** Authentication */
 export async function fetchMe() {
@@ -37,7 +50,7 @@ export async function doLogin(email: string, password: string) {
 }
 
 export async function doRegister(email: string, password: string, name: string, role: string) {
-  return register(email, password, name, role as any);
+  return API.post("/auth/register", { email, password, name, role });
 }
 
 /** Tasks */
@@ -139,13 +152,20 @@ export async function fetchAllUsers() {
   return fetchUsers();
 }
 
-export async function createNewUser(payload: { name: string; email: string; password: string; role: string }) {
-  return createUser({
-    name: payload.name,
-    email: payload.email,
-    password: payload.password,
-    role: payload.role,
-  });
+export async function createNewUser(payload: {
+  name: string;
+  email: string;
+  role: string;
+  department?: string;
+  team?: string;
+  specialty?: string;
+  assignedPmId?: number;
+  phoneNumber?: string;
+  githubUsername?: string;
+  skills?: string[];
+}) {
+  // The backend generates the temporary password and returns it as `tempPassword`.
+  return API.post("/admin/users", payload);
 }
 
 export async function changeUserRole(userId: number, role: string) {
@@ -194,5 +214,3 @@ export async function addPlannerEventToStore(event: Omit<PlannerEvent, "id">) {
 export async function fetchAuditLogHistory() {
   return fetchAuditLogs();
 }
-
-

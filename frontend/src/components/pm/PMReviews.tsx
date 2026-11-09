@@ -12,7 +12,6 @@ import {
 } from "lucide-react";
 import { Task } from "../../types";
 import { useAuth } from "../../context/AuthContext";
-import { addAuditLog, addNotification } from "../../services/mockDataStore";
 
 interface PMReviewsProps {
   tasks: Task[];
@@ -64,26 +63,6 @@ export const PMReviews: React.FC<PMReviewsProps> = ({
         },
       ],
     };
-
-    if (task.assigneeId) {
-      addNotification(
-        task.assigneeId,
-        isApprove ? "Review Approved" : "Revision Requested",
-        isApprove
-          ? `Your work on "${task.title}" has been approved by ${user.name} and moved to Done.`
-          : `Review comments on "${task.title}": ${note || "Please revise changes."}`,
-        "REVIEW",
-        `task-${task.id}`
-      );
-    }
-
-    addAuditLog(
-      user,
-      `REVIEW_${decision}`,
-      "Task",
-      task.id,
-      `${user.name} marked review ${decision}`
-    );
 
     setReviewNote((prev) => {
       const c = { ...prev };

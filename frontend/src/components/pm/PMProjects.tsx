@@ -15,7 +15,6 @@ import {
 import { Project, Task } from "../../types";
 import { useAuth } from "../../context/AuthContext";
 import API from "../../services/api";
-import { addAuditLog } from "../../services/mockDataStore";
 
 interface PMProjectsProps {
   projects: Project[];

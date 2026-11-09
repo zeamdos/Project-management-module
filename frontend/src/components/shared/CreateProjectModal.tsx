@@ -3,7 +3,6 @@ import { AlertCircle, FolderKanban, Sparkles, X } from "lucide-react";
 import API from "../../services/api";
 import { Project } from "../../types";
 import { useAuth } from "../../context/AuthContext";
-import { addAuditLog } from "../../services/mockDataStore";
 
 interface CreateProjectModalProps {
   onClose: () => void;
@@ -51,10 +50,6 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
         createdAt: new Date().toISOString(),
       };
 
-      if (user) {
-        addAuditLog(user, "PROJECT_CREATED", "Project", created.id, `Created project "${created.name}"`);
-      }
-
       onProjectCreated(created, res.data?.tasks);
       onClose();
     } catch (err: any) {
@@ -70,10 +65,6 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
         pmId: user?.id,
         createdAt: new Date().toISOString(),
       };
-
-      if (user) {
-        addAuditLog(user, "PROJECT_CREATED", "Project", fallbackProject.id, `Created project "${fallbackProject.name}" (local fallback)`);
-      }
 
       onProjectCreated(fallbackProject);
       onClose();

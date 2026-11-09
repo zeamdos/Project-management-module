@@ -11,7 +11,6 @@ import {
 } from "lucide-react";
 import { Task, TaskStatus } from "../../types";
 import { useAuth } from "../../context/AuthContext";
-import { addAuditLog } from "../../services/mockDataStore";
 
 interface DeveloperKanbanProps {
   tasks: Task[];
@@ -51,10 +50,6 @@ export const DeveloperKanban: React.FC<DeveloperKanbanProps> = ({
       status: targetStatus,
       updatedAt: new Date().toISOString(),
     };
-
-    if (user) {
-      addAuditLog(user, "DEV_KANBAN_MOVE", "Task", task.id, `Status updated to ${targetStatus}`);
-    }
 
     onUpdateTask(updated);
   };

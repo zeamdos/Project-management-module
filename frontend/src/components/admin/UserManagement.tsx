@@ -1,31 +1,19 @@
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   AlertCircle,
   Check,
   CheckCircle2,
   Copy,
-  Eye,
   Key,
-  Lock,
-  Plus,
   RefreshCw,
   Search,
-  Shield,
-  Trash2,
   UserCheck,
   UserMinus,
   UserPlus,
-  Users,
   X,
 } from "lucide-react";
-import { User, UserRole, UserStatus, Project } from "../../types";
+import { User, UserRole, UserStatus } from "../../types";
 import { useAuth } from "../../context/AuthContext";
-import {
-  addAuditLog,
-  getStoredTeams,
-  getStoredUsers,
-  saveStoredUsers,
-} from "../../services/mockDataStore";
 import { getRoles } from "../../services/permissions";
 import API from "../../services/api";
 
@@ -33,11 +21,61 @@ interface UserManagementProps {
   onConfigureUserPermissions: (user: User) => void;
 }
 
+const PASSWORD_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789!@#$%";
+
+function generatePassword(length = 12): string {
+  const values = new Uint32Array(length);
+  crypto.getRandomValues(values);
+  return Array.from(values, (v) => PASSWORD_CHARS[v % PASSWORD_CHARS.length]).join("");
+}
+
+function errorMessage(err: any, fallback: string): string {
+  const fromServer = err?.response?.data?.error || err?.response?.data?.message;
+  if (fromServer) return String(fromServer);
+  if (err?.request && !err?.response) {
+    return "Cannot reach the server. Check that the backend is running.";
+  }
+  return fallback;
+}
+
+function mapServerUser(su: any): User {
+  return {
+    id: su.id,
+    orgId: su.orgId,
+    name: su.name,
+    email: su.email,
+    role: su.role,
+    department: su.department || "Engineering",
+    team: su.team || "General",
+    specialty: su.specialty || undefined,
+    assignedPmId: su.assignedPmId || undefined,
+    status: su.status || "ACTIVE",
+    phoneNumber: su.phoneNumber || null,
+    githubUsername: su.githubUsername || null,
+    telegramLinked: !!su.telegramChatId,
+    isTemporaryPassword: su.isTemporaryPassword === true,
+    avatar: su.name ? su.name.slice(0, 2).toUpperCase() : "U",
+    createdAt: su.createdAt,
+  } as User;
+}
+
+/** "Developer - Frontend" -> { role: "DEVELOPER", specialty: "Frontend", ... } */
+function parseUnifiedRole(unified: string) {
+  const [roleStr, specialtyStr] = unified.split(" - ");
+  const role = (roleStr === "Manager" ? "MANAGER" : roleStr === "Administrator" ? "ADMIN" : "DEVELOPER") as UserRole;
+  const department =
+    role === "ADMIN" ? "Executive Leadership" : role === "MANAGER" ? "Engineering Management" : "Engineering";
+  return { role, specialty: specialtyStr || undefined, department };
+}
+
 export const UserManagement: React.FC<UserManagementProps> = ({
   onConfigureUserPermissions,
 }) => {
-  const { user: currentUser, refreshUsers } = useAuth();
-  const [usersList, setUsersList] = useState<User[]>(getStoredUsers);
+  const { refreshUsers, allUsers } = useAuth();
+  const [usersList, setUsersList] = useState<User[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
+  const [actionError, setActionError] = useState("");
   const [search, setSearch] = useState("");
   const [roleFilter, setRoleFilter] = useState<string>("ALL");
   const [statusFilter, setStatusFilter] = useState<string>("ALL");
@@ -46,65 +84,50 @@ export const UserManagement: React.FC<UserManagementProps> = ({
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
-  const [assignedRole, setAssignedRole] = useState<UserRole>("DEVELOPER");
   const [unifiedRole, setUnifiedRole] = useState("Developer - Frontend");
   const [team, setTeam] = useState("Frontend Engineering");
-  const [assignedPmId, setAssignedPmId] = useState<number | undefined>(2);
+  const [assignedPmId, setAssignedPmId] = useState<number | undefined>(undefined);
   const [phoneNumber, setPhoneNumber] = useState("");
   const [githubUsername, setGithubUsername] = useState("");
   const [skillsInput, setSkillsInput] = useState("");
   const [generatedPassword, setGeneratedPassword] = useState("");
   const [copied, setCopied] = useState(false);
   const [createSuccessMsg, setCreateSuccessMsg] = useState("");
+  const [createError, setCreateError] = useState("");
+  const [submitting, setSubmitting] = useState(false);
 
   // Edit User Modal State
   const [editingUser, setEditingUser] = useState<User | null>(null);
+  const [editError, setEditError] = useState("");
 
   const roles = getRoles();
-  const teams = getStoredTeams();
+  const teamNames = useMemo(
+    () => Array.from(new Set(allUsers.map((u) => u.team).filter((t): t is string => Boolean(t)))),
+    [allUsers]
+  );
   const projectManagers = usersList.filter(
     (u) => u.role === "PROJECT_MANAGER" || u.role === "MANAGER"
   );
 
-  // Sync with live backend API on mount
-  useEffect(() => {
-    API.get("/admin/users")
-      .then((res) => {
-        if (res.data?.users && Array.isArray(res.data.users)) {
-          const serverUsers: User[] = res.data.users.map((su: any) => ({
-            id: su.id,
-            orgId: su.orgId,
-            name: su.name,
-            email: su.email,
-            role: su.role,
-            department: su.department || "Engineering",
-            team: su.team || "General",
-            specialty: su.specialty || undefined,
-            assignedPmId: su.assignedPmId || undefined,
-            status: su.status,
-            phoneNumber: su.phoneNumber || null,
-            githubUsername: su.githubUsername || null,
-            telegramLinked: !!su.telegramChatId,
-            avatar: su.name ? su.name.slice(0, 2).toUpperCase() : "U",
-            createdAt: su.createdAt,
-          }));
-          setUsersList(serverUsers);
-          saveStoredUsers(serverUsers);
-        }
-      })
-      .catch(() => {
-        // graceful offline fallback
-      });
+  const loadUsers = useCallback(async () => {
+    setLoadError("");
+    try {
+      const res = await API.get("/admin/users");
+      const list = res.data?.users ?? res.data;
+      if (!Array.isArray(list)) throw new Error("Unexpected response from /admin/users");
+      setUsersList(list.map(mapServerUser));
+    } catch (err) {
+      setLoadError(errorMessage(err, "Failed to load users."));
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
-  const generateRandomPassword = () => {
-    const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789!@#$%";
-    let pwd = "";
-    for (let i = 0; i < 12; i++) {
-      pwd += chars.charAt(Math.floor(Math.random() * chars.length));
-    }
-    setGeneratedPassword(pwd);
-  };
+  useEffect(() => {
+    loadUsers();
+  }, [loadUsers]);
+
+  const generateRandomPassword = () => setGeneratedPassword(generatePassword());
 
   const handleOpenCreateModal = () => {
     generateRandomPassword();
@@ -113,156 +136,104 @@ export const UserManagement: React.FC<UserManagementProps> = ({
     setPhoneNumber("");
     setGithubUsername("");
     setSkillsInput("");
-    setAssignedRole("DEVELOPER");
     setUnifiedRole("Developer - Frontend");
-    setTeam(teams[0]?.name || "Frontend Engineering");
+    setTeam(teamNames[0] || "Frontend Engineering");
     setAssignedPmId(projectManagers[0]?.id || undefined);
     setCreateSuccessMsg("");
+    setCreateError("");
     setShowCreateModal(true);
   };
 
   const handleCreateUser = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!fullName || !email) return;
+    if (!fullName || !email || submitting) return;
 
-    // Parse unified role to extract role and specialty
-    const [roleStr, specialtyStr] = unifiedRole.split(" - ");
-    const finalRole = roleStr === "Manager" ? "MANAGER" : roleStr === "Administrator" ? "ADMIN" : "DEVELOPER";
-    const finalSpecialty = specialtyStr || undefined;
-    const finalDepartment = finalRole === "ADMIN" ? "Executive Leadership" : finalRole === "MANAGER" ? "Engineering Management" : "Engineering";
+    const { role, specialty, department } = parseUnifiedRole(unifiedRole);
     const skills = skillsInput.split(",").map((s) => s.trim()).filter(Boolean);
 
+    setSubmitting(true);
+    setCreateError("");
     try {
-      // Real backend API call
       const res = await API.post("/admin/users", {
         name: fullName.trim(),
         email: email.trim().toLowerCase(),
-        role: finalRole,
-        department: finalDepartment,
+        role,
+        department,
         team,
-        specialty: finalSpecialty,
-        assignedPmId: finalRole === "DEVELOPER" ? assignedPmId : undefined,
+        specialty,
+        assignedPmId: role === "DEVELOPER" ? assignedPmId : undefined,
         phoneNumber: phoneNumber.trim() || undefined,
         githubUsername: githubUsername.trim() || undefined,
         skills: skills.length > 0 ? skills : undefined,
       });
 
       const { user: created, tempPassword } = res.data;
-      const newUser: User = {
-        id: created.id,
-        orgId: created.orgId,
-        name: created.name,
-        email: created.email,
-        role: created.role,
-        department: created.department || finalDepartment,
+      const newUser = mapServerUser({
+        ...created,
+        department: created.department || department,
         team: created.team || team,
-        specialty: created.specialty,
-        assignedPmId: created.assignedPmId || assignedPmId,
+        assignedPmId: created.assignedPmId || (role === "DEVELOPER" ? assignedPmId : undefined),
         phoneNumber: created.phoneNumber || phoneNumber.trim() || null,
         githubUsername: created.githubUsername || githubUsername.trim() || null,
-        status: "ACTIVE",
         isTemporaryPassword: true,
-        avatar: created.name.slice(0, 2).toUpperCase(),
-        createdAt: created.createdAt,
-      };
-      const updated = [newUser, ...usersList];
-      saveStoredUsers(updated);
-      setUsersList(updated);
-      refreshUsers();
+      });
+      setUsersList((prev) => [newUser, ...prev]);
+      // Show the password the SERVER generated, not the client-side preview.
+      setGeneratedPassword(tempPassword);
       setCreateSuccessMsg(
-        `✅ Account for ${newUser.name} provisioned.\n\nTemporary password: ${tempPassword}\n\nShare this securely with the employee. They must change it upon first login.`
+        `Account for ${newUser.name} provisioned.\n\nShare the temporary password securely with the employee. They must change it upon first login.`
       );
-    } catch {
-      // Offline fallback
-      const initials = fullName.split(" ").map((n) => n[0]).join("").slice(0, 2).toUpperCase();
-      const [roleStr, specialtyStr] = unifiedRole.split(" - ");
-      const finalRole = roleStr === "Manager" ? "MANAGER" : roleStr === "Administrator" ? "ADMIN" : "DEVELOPER";
-      const finalSpecialty = specialtyStr || undefined;
-      const finalDepartment = finalRole === "ADMIN" ? "Executive Leadership" : finalRole === "MANAGER" ? "Engineering Management" : "Engineering";
-
-      const newUser: User = {
-        id: Date.now(),
-        orgId: 1,
-        name: fullName.trim(),
-        email: email.trim().toLowerCase(),
-        role: finalRole as UserRole,
-        department: finalDepartment,
-        team,
-        specialty: finalSpecialty,
-        assignedPmId: finalRole === "DEVELOPER" ? assignedPmId : undefined,
-        phoneNumber: phoneNumber.trim() || null,
-        githubUsername: githubUsername.trim() || null,
-        status: "ACTIVE",
-        isTemporaryPassword: true,
-        avatar: initials,
-        createdAt: new Date().toISOString(),
-      };
-      const updated = [newUser, ...usersList];
-      saveStoredUsers(updated);
-      setUsersList(updated);
-      refreshUsers();
-      if (currentUser) addAuditLog(currentUser, "USER_PROVISIONED", "User", newUser.id, `Created ${newUser.name}`);
-      setCreateSuccessMsg(`Account for ${newUser.name} created (offline). Temporary password: ${generatedPassword}`);
+      void refreshUsers();
+    } catch (err) {
+      setCreateError(errorMessage(err, "Could not create the account."));
+    } finally {
+      setSubmitting(false);
     }
   };
 
   const handleToggleStatus = async (targetUser: User) => {
-    if (targetUser.role === "ADMIN" && usersList.filter((u) => u.role === "ADMIN").length <= 1) {
-      alert("Cannot deactivate the sole Administrator.");
+    const activeAdmins = usersList.filter((u) => u.role === "ADMIN" && u.status === "ACTIVE");
+    if (targetUser.role === "ADMIN" && targetUser.status === "ACTIVE" && activeAdmins.length <= 1) {
+      setActionError("Cannot deactivate the sole active Administrator.");
       return;
     }
 
     const newStatus: UserStatus = targetUser.status === "ACTIVE" ? "INACTIVE" : "ACTIVE";
-
+    setActionError("");
     try {
       await API.patch(`/admin/users/${targetUser.id}`, { status: newStatus });
-    } catch {
-      // Fallback to local
-    }
-
-    const updated = usersList.map((u) =>
-      u.id === targetUser.id ? { ...u, status: newStatus } : u
-    );
-    saveStoredUsers(updated);
-    setUsersList(updated);
-    refreshUsers();
-    if (currentUser) {
-      addAuditLog(currentUser, newStatus === "ACTIVE" ? "USER_REACTIVATED" : "USER_DEACTIVATED", "User", targetUser.id, `Status set to ${newStatus}`);
+      setUsersList((prev) => prev.map((u) => (u.id === targetUser.id ? { ...u, status: newStatus } : u)));
+      void refreshUsers();
+    } catch (err) {
+      setActionError(errorMessage(err, `Could not update status for ${targetUser.name}.`));
     }
   };
 
   const handleResetPassword = async (targetUser: User) => {
+    if (!window.confirm(`Reset the password for ${targetUser.name}? Their current password will stop working.`)) {
+      return;
+    }
+    setActionError("");
     try {
       const res = await API.post(`/admin/users/${targetUser.id}/reset-password`);
       const { tempPassword } = res.data;
-      const updated = usersList.map((u) =>
-        u.id === targetUser.id ? { ...u, isTemporaryPassword: true } : u
+      setUsersList((prev) =>
+        prev.map((u) => (u.id === targetUser.id ? { ...u, isTemporaryPassword: true } : u))
       );
-      saveStoredUsers(updated);
-      setUsersList(updated);
-      refreshUsers();
-      if (currentUser) addAuditLog(currentUser, "USER_PASSWORD_RESET", "User", targetUser.id, `Reset password for ${targetUser.name}`);
-      alert(`🔑 Temporary password for ${targetUser.name}:\n\n${tempPassword}\n\nShare this securely. They must change it on next login.`);
-    } catch {
-      // Offline fallback
-      const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789!@#$%";
-      let temp = "";
-      for (let i = 0; i < 12; i++) temp += chars.charAt(Math.floor(Math.random() * chars.length));
-      const updated = usersList.map((u) =>
-        u.id === targetUser.id ? { ...u, isTemporaryPassword: true } : u
+      window.alert(
+        `Temporary password for ${targetUser.name}:\n\n${tempPassword}\n\nShare this securely. They must change it on next login.`
       );
-      saveStoredUsers(updated);
-      setUsersList(updated);
-      refreshUsers();
-      if (currentUser) addAuditLog(currentUser, "USER_PASSWORD_RESET", "User", targetUser.id, `Reset password for ${targetUser.name}`);
-      alert(`🔑 Temporary password for ${targetUser.name}:\n\n${temp}\n\nThe user must reset this on their next login.`);
+    } catch (err) {
+      setActionError(errorMessage(err, `Could not reset the password for ${targetUser.name}.`));
     }
   };
 
   const handleSaveEdit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!editingUser) return;
+    if (!editingUser || submitting) return;
 
+    setSubmitting(true);
+    setEditError("");
     try {
       await API.patch(`/admin/users/${editingUser.id}`, {
         name: editingUser.name,
@@ -275,20 +246,14 @@ export const UserManagement: React.FC<UserManagementProps> = ({
         githubUsername: editingUser.githubUsername,
         phoneNumber: editingUser.phoneNumber,
       });
-    } catch {
-      // Fallback to local
+      setUsersList((prev) => prev.map((u) => (u.id === editingUser.id ? editingUser : u)));
+      void refreshUsers();
+      setEditingUser(null);
+    } catch (err) {
+      setEditError(errorMessage(err, "Could not save changes."));
+    } finally {
+      setSubmitting(false);
     }
-
-    const updated = usersList.map((u) =>
-      u.id === editingUser.id ? editingUser : u
-    );
-    saveStoredUsers(updated);
-    setUsersList(updated);
-    refreshUsers();
-    if (currentUser) {
-      addAuditLog(currentUser, "USER_PROFILE_UPDATED", "User", editingUser.id, `Updated account for ${editingUser.name}`);
-    }
-    setEditingUser(null);
   };
 
   const filteredUsers = usersList.filter((u) => {
@@ -318,6 +283,19 @@ export const UserManagement: React.FC<UserManagementProps> = ({
           <UserPlus size={15} /> Create User Account
         </button>
       </div>
+
+      {(loadError || actionError) && (
+        <div className="flex items-start gap-2 rounded-xl border border-red-900/60 bg-red-950/30 p-3 text-xs text-red-300">
+          <AlertCircle size={15} className="mt-0.5 shrink-0" />
+          <span className="flex-1">{loadError || actionError}</span>
+          {loadError && (
+            <button onClick={loadUsers} className="underline hover:text-white">
+              Retry
+            </button>
+          )}
+        </div>
+      )}
+      {loading && <p className="text-xs text-[#777]">Loading users...</p>}
 
       {/* Filter Toolbar */}
       <div className="flex flex-col gap-3 rounded-2xl border border-[#262626] bg-[#141414] p-4 sm:flex-row sm:items-center sm:justify-between">
@@ -545,6 +523,12 @@ export const UserManagement: React.FC<UserManagementProps> = ({
               </div>
             ) : (
               <form onSubmit={handleCreateUser} className="space-y-4">
+                {createError && (
+                  <div className="flex items-start gap-2 rounded-xl border border-red-900/60 bg-red-950/30 p-3 text-xs text-red-300">
+                    <AlertCircle size={15} className="mt-0.5 shrink-0" /> <span>{createError}</span>
+                  </div>
+                )}
+
                 <div className="grid gap-3 sm:grid-cols-2">
                   <div>
                     <label className="block text-xs font-medium text-[#aaa] mb-1">Full Name</label>
@@ -595,9 +579,9 @@ export const UserManagement: React.FC<UserManagementProps> = ({
                       onChange={(e) => setTeam(e.target.value)}
                       className="w-full rounded-xl border border-[#333] bg-[#101010] px-3.5 py-2.5 text-xs text-white outline-none"
                     >
-                      {teams.map((t) => (
-                        <option key={t.id} value={t.name}>
-                          {t.name}
+                      {teamNames.map((name) => (
+                        <option key={name} value={name}>
+                          {name}
                         </option>
                       ))}
                       <option value="Core Delivery">Core Delivery</option>
@@ -666,23 +650,6 @@ export const UserManagement: React.FC<UserManagementProps> = ({
                   </div>
                 </div>
 
-                {assignedRole === "DEVELOPER" && (
-                  <div>
-                    <label className="block text-xs font-medium text-[#aaa] mb-1">Engineering Specialty</label>
-                    <select
-                      value={specialty}
-                      onChange={(e) => setSpecialty(e.target.value)}
-                      className="w-full rounded-xl border border-[#333] bg-[#101010] px-3.5 py-2.5 text-xs text-white outline-none"
-                    >
-                      <option value="Frontend">Frontend</option>
-                      <option value="Backend">Backend</option>
-                      <option value="UI/UX">UI/UX</option>
-                      <option value="AI">AI / Machine Learning</option>
-                      <option value="QA">QA & Verification</option>
-                    </select>
-                  </div>
-                )}
-
                 {/* Auto-Generated Temporary Password Box */}
                 <div className="rounded-xl border border-[#2d2d2d] bg-[#171717] p-3.5 space-y-2">
                   <div className="flex items-center justify-between">
@@ -718,7 +685,7 @@ export const UserManagement: React.FC<UserManagementProps> = ({
                     type="submit"
                     className="rounded-xl bg-[#e5e5e5] px-5 py-2 text-xs font-semibold text-[#141414] hover:bg-white"
                   >
-                    Provision Account
+                    {submitting ? "Provisioning..." : "Provision Account"}
                   </button>
                 </div>
               </form>
@@ -744,6 +711,12 @@ export const UserManagement: React.FC<UserManagementProps> = ({
 
             <div className="overflow-y-auto px-6 pb-6 pt-4 flex-1">
             <form onSubmit={handleSaveEdit} className="space-y-4">
+              {editError && (
+                  <div className="flex items-start gap-2 rounded-xl border border-red-900/60 bg-red-950/30 p-3 text-xs text-red-300">
+                    <AlertCircle size={15} className="mt-0.5 shrink-0" /> <span>{editError}</span>
+                  </div>
+                )}
+
               <div>
                 <label className="block text-xs font-medium text-[#aaa] mb-1">Full Name</label>
                 <input

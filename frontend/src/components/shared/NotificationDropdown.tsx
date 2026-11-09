@@ -1,11 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { AlertCircle, AlertTriangle, Bell, Check, CheckCheck, Clock, ShieldAlert } from "lucide-react";
 import { useAuth } from "../../context/AuthContext";
-import {
-  getStoredNotifications,
-  markAllNotificationsRead,
-  markNotificationRead,
-} from "../../services/mockDataStore";
 import { NotificationItem } from "../../types";
 import API from "../../services/api";
 
@@ -16,9 +11,7 @@ interface NotificationDropdownProps {
 export const NotificationDropdown: React.FC<NotificationDropdownProps> = ({ onSelectTask }) => {
   const { user } = useAuth();
   const [open, setOpen] = useState(false);
-  const [notifications, setNotifications] = useState<NotificationItem[]>(() =>
-    getStoredNotifications(user?.id)
-  );
+  const [notifications, setNotifications] = useState<NotificationItem[]>([]);
 
   const fetchLiveNotifications = () => {
     API.get("/me/notifications")
@@ -35,11 +28,11 @@ export const NotificationDropdown: React.FC<NotificationDropdownProps> = ({ onSe
           }));
           setNotifications(live);
         } else {
-          setNotifications(getStoredNotifications(user?.id));
+          setNotifications([]);
         }
       })
       .catch(() => {
-        setNotifications(getStoredNotifications(user?.id));
+        setNotifications([]);
       });
   };
 
@@ -53,13 +46,11 @@ export const NotificationDropdown: React.FC<NotificationDropdownProps> = ({ onSe
   const unreadCount = notifications.filter((n) => !n.readAt).length;
 
   const handleMarkOne = async (id: string | number, link?: string) => {
-    // Try backend first
     try {
       await API.post(`/me/notifications/${id}/read`);
     } catch {
-      // Local fallback
+      // Optimistic update below still applies
     }
-    markNotificationRead(id);
     setNotifications((prev) =>
       prev.map((n) => (n.id === id ? { ...n, readAt: new Date().toISOString() } : n))
     );
@@ -78,9 +69,8 @@ export const NotificationDropdown: React.FC<NotificationDropdownProps> = ({ onSe
     try {
       await API.post("/me/notifications/read-all");
     } catch {
-      // Local fallback
+      // Optimistic update below still applies
     }
-    markAllNotificationsRead(user.id);
     setNotifications((prev) =>
       prev.map((n) => ({ ...n, readAt: n.readAt || new Date().toISOString() }))
     );

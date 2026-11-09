@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import {
   AlertCircle,
   Briefcase,
@@ -13,22 +13,45 @@ import {
   Users,
   X,
 } from "lucide-react";
-import { Team, User } from "../../types";
+import { Task, Team, User } from "../../types";
 import { useAuth } from "../../context/AuthContext";
-import {
-  addAuditLog,
-  getStoredTasks,
-  getStoredTeams,
-  getStoredUsers,
-  saveStoredTeams,
-  saveStoredUsers,
-} from "../../services/mockDataStore";
 
 export const TeamsDepartments: React.FC = () => {
-  const { user: currentUser } = useAuth();
-  const [teams, setTeams] = useState<Team[]>(getStoredTeams);
-  const [users, setUsers] = useState<User[]>(getStoredUsers);
-  const tasks = getStoredTasks();
+  const { allUsers } = useAuth();
+  const [createdTeams, setCreatedTeams] = useState<Team[]>([]);
+  const [teamOverrides, setTeamOverrides] = useState<Record<number, string>>({});
+  const tasks: Task[] = [];
+
+  const users = useMemo(
+    () =>
+      allUsers.map((u) =>
+        teamOverrides[u.id] ? { ...u, team: teamOverrides[u.id] } : u
+      ),
+    [allUsers, teamOverrides]
+  );
+
+  const teams = useMemo<Team[]>(() => {
+    const teamMap = new Map<string, Omit<Team, "id">>();
+    for (const u of users) {
+      const teamName = u.team || "Unassigned";
+      if (!teamMap.has(teamName)) {
+        teamMap.set(teamName, {
+          name: teamName,
+          department: u.department || "General",
+          leadId: u.assignedPmId || u.id,
+          leadName: users.find((a) => a.id === (u.assignedPmId || u.id))?.name || u.name,
+          memberIds: [u.id],
+          description: `${teamName} team`,
+        });
+      } else {
+        teamMap.get(teamName)!.memberIds.push(u.id);
+      }
+    }
+    const derived = Array.from(teamMap.values()).map(
+      (t, i): Team => ({ id: i + 1, ...t })
+    );
+    return [...derived, ...createdTeams];
+  }, [users, createdTeams]);
 
   const [showCreateTeamModal, setShowCreateTeamModal] = useState(false);
   const [newTeamName, setNewTeamName] = useState("");
@@ -55,60 +78,17 @@ export const TeamsDepartments: React.FC = () => {
       description: newTeamDesc.trim() || undefined,
     };
 
-    const updated = [...teams, newTeam];
-    setTeams(updated);
-    saveStoredTeams(updated);
+    setCreatedTeams((prev) => [...prev, newTeam]);
     setShowCreateTeamModal(false);
     setNewTeamName("");
     setNewTeamDesc("");
-
-    if (currentUser) {
-      addAuditLog(
-        currentUser,
-        "TEAM_CREATED",
-        "Team",
-        newTeam.id,
-        `Created team "${newTeam.name}" in ${newTeam.department}`
-      );
-    }
   };
 
   const handleMoveUserTeam = (e: React.FormEvent) => {
     e.preventDefault();
     if (!movingUser || !targetTeamName) return;
 
-    const oldTeam = movingUser.team;
-    const updatedUsers = users.map((u) =>
-      u.id === movingUser.id ? { ...u, team: targetTeamName } : u
-    );
-
-    // Update team memberIds
-    const updatedTeams = teams.map((t) => {
-      let memberIds = [...t.memberIds];
-      if (t.name === oldTeam) {
-        memberIds = memberIds.filter((id) => id !== movingUser.id);
-      }
-      if (t.name === targetTeamName && !memberIds.includes(movingUser.id)) {
-        memberIds.push(movingUser.id);
-      }
-      return { ...t, memberIds };
-    });
-
-    setUsers(updatedUsers);
-    setTeams(updatedTeams);
-    saveStoredUsers(updatedUsers);
-    saveStoredTeams(updatedTeams);
-
-    if (currentUser) {
-      addAuditLog(
-        currentUser,
-        "USER_TEAM_TRANSFERRED",
-        "User",
-        movingUser.id,
-        `Transferred ${movingUser.name} from "${oldTeam}" to "${targetTeamName}"`
-      );
-    }
-
+    setTeamOverrides((prev) => ({ ...prev, [movingUser.id]: targetTeamName }));
     setMovingUser(null);
   };
 

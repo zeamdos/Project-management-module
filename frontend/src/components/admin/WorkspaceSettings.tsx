@@ -1,10 +1,7 @@
 import React, { useState } from "react";
 import { CheckCircle2, Globe, Lock, Save, Settings, ShieldCheck, Sliders } from "lucide-react";
-import { useAuth } from "../../context/AuthContext";
-import { addAuditLog } from "../../services/mockDataStore";
 
 export const WorkspaceSettings: React.FC = () => {
-  const { user } = useAuth();
   const [orgName, setOrgName] = useState("Enterprise HQ");
   const [domain, setDomain] = useState("enterprise.com");
   const [requireReviewForDone, setRequireReviewForDone] = useState(true);
@@ -15,15 +12,6 @@ export const WorkspaceSettings: React.FC = () => {
 
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
-    if (user) {
-      addAuditLog(
-        user,
-        "WORKSPACE_SETTINGS_SAVED",
-        "Organization",
-        1,
-        `Updated workspace governance policies: ReviewRequired=${requireReviewForDone}, Cycle=${progressCycleDays}d`
-      );
-    }
     setSavedMsg("Workspace policy settings saved successfully.");
     setTimeout(() => setSavedMsg(""), 3500);
   };

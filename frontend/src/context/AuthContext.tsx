@@ -2,11 +2,6 @@ import React, { createContext, useContext, useEffect, useState } from "react";
 import API from "../services/api";
 import { PermissionKey, User, UserRole } from "../types";
 import { hasPermission } from "../services/permissions";
-import {
-  addAuditLog,
-  getStoredUsers,
-  saveStoredUsers,
-} from "../services/mockDataStore";
 
 interface AuthContextType {
   user: User | null;
@@ -27,7 +22,7 @@ interface AuthContextType {
   isTemporaryPasswordRequired: boolean;
   resolveTemporaryPassword: (newPassword: string) => void;
   allUsers: User[];
-  refreshUsers: () => void;
+  refreshUsers: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -46,15 +41,43 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
       return null;
     }
   });
-  const [allUsers, setAllUsers] = useState<User[]>(getStoredUsers);
+  const [allUsers, setAllUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(false);
 
-  const refreshUsers = () => {
-    setAllUsers(getStoredUsers());
+  // Fetches the live org roster from the backend so newly provisioned users
+  // show up in assignee dropdowns, kanban, and workload views.
+  const refreshUsers = async () => {
+    try {
+      const res = await API.get("/admin/users");
+      const list = res.data?.users ?? res.data;
+      if (Array.isArray(list)) {
+        const mapped: User[] = list.map((su: any) => ({
+          id: su.id,
+          orgId: su.orgId,
+          name: su.name,
+          email: su.email,
+          role: su.role,
+          department: su.department || undefined,
+          team: su.team || undefined,
+          specialty: su.specialty || undefined,
+          assignedPmId: su.assignedPmId || undefined,
+          status: su.status || "ACTIVE",
+          phoneNumber: su.phoneNumber || null,
+          githubUsername: su.githubUsername || null,
+          telegramLinked: !!su.telegramChatId,
+          isTemporaryPassword: su.isTemporaryPassword === true,
+          avatar: su.name ? su.name.slice(0, 2).toUpperCase() : "U",
+          createdAt: su.createdAt,
+        }));
+        setAllUsers(mapped);
+      }
+    } catch (err) {
+      console.error("Failed to fetch users from backend:", err);
+    }
   };
 
   useEffect(() => {
-    // If token exists, attempt to sync profile from /api/me
+    // If token exists, sync profile and user roster from the backend.
     if (token) {
       API.get("/me")
         .then((res) => {
@@ -70,15 +93,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
           }
         })
         .catch(() => {
-          // Keep existing local user on offline or prototype fallback
+          // Token may be expired — clear it so the user sees the login screen.
+          localStorage.removeItem("token");
+          localStorage.removeItem("user");
+          setToken(null);
+          setUser(null);
         });
+
+      refreshUsers();
     }
   }, [token]);
 
   const login = async (email: string, password: string) => {
     setLoading(true);
     try {
-      // First attempt real backend authentication
       const response = await API.post("/auth/login", { email, password });
       const apiToken = response.data.token;
       const apiUser = response.data.user;
@@ -87,26 +115,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
       localStorage.setItem("user", JSON.stringify(apiUser));
       setToken(apiToken);
       setUser(apiUser);
-      addAuditLog(apiUser, "LOGIN_SUCCESS", "Session", apiUser.id, `Signed in via primary auth`);
     } catch (apiError: any) {
-      // If backend is not running or credentials match mock data accounts (e.g. testing different developers)
-      const normalizedEmail = email.toLowerCase().trim();
-      const matched = allUsers.find(
-        (u) => u.email.toLowerCase() === normalizedEmail
-      );
-
-      if (matched) {
-        // Mock fallback login for testing all roles seamlessly
-        const syntheticToken = `mock-token-${matched.id}-${Date.now()}`;
-        localStorage.setItem("token", syntheticToken);
-        localStorage.setItem("user", JSON.stringify(matched));
-        setToken(syntheticToken);
-        setUser(matched);
-        addAuditLog(matched, "LOGIN_SUCCESS", "Session", matched.id, `Signed in via organization credentials (prototype/offline fallback)`);
-        setLoading(false);
-        return;
-      }
-
       setLoading(false);
       throw apiError;
     } finally {
@@ -115,9 +124,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
   };
 
   const logout = () => {
-    if (user) {
-      addAuditLog(user, "LOGOUT", "Session", user.id, `User logged out`);
-    }
     localStorage.removeItem("token");
     localStorage.removeItem("user");
     setToken(null);
@@ -134,23 +140,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
     const updatedUsers = allUsers.map((u) =>
       u.id === user.id ? { ...u, ...updates } : u
     );
-    saveStoredUsers(updatedUsers);
     setAllUsers(updatedUsers);
 
-    // If backend profile endpoint available, send patch
+    // Sync to backend profile endpoint
     API.patch("/me", updates).catch(() => undefined);
   };
 
-  const resolveTemporaryPassword = (newPassword: string) => {
+  const resolveTemporaryPassword = (_newPassword: string) => {
     if (!user) return;
     updateUser({ isTemporaryPassword: false });
-    addAuditLog(
-      user,
-      "PASSWORD_RESET_COMPLETED",
-      "User",
-      user.id,
-      "Temporary password changed on initial setup"
-    );
   };
 
   const switchRoleEmulator = (targetRole: UserRole) => {

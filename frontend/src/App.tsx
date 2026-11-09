@@ -2,12 +2,9 @@ import React, { useEffect, useMemo, useState } from "react";
 import {
   Activity,
   AlertCircle,
-  AlertTriangle,
-  Bell,
   CalendarDays,
   CheckCircle2,
   ChevronDown,
-  Clock,
   FolderKanban,
   GitBranch,
   Layers,
@@ -15,9 +12,6 @@ import {
   ListTodo,
   LogOut,
   Menu,
-  Plus,
-  RefreshCw,
-  Search,
   Settings,
   Shield,
   ShieldCheck,
@@ -25,18 +19,13 @@ import {
   UserCheck,
   Users,
   X,
-  MoreHorizontal,
 } from "lucide-react";
 import { AuthProvider, useAuth } from "./context/AuthContext";
-import { Project, Task, TaskStatus, User, UserRole, NotificationItem, PlannerEvent } from "./types";
-import API from "./services/api";
+import { Project, Task, TaskStatus, User } from "./types";
 import {
+  changeTaskStatus,
   fetchAllProjects,
   fetchAllTasks,
-  fetchAllUsers,
-  fetchUserNotifications,
-  fetchPlannerEventsList,
-  fetchAuditLogHistory,
 } from "./services/apiClient";
 
 // Admin Components
@@ -70,6 +59,23 @@ import { ChangePasswordModal } from "./components/shared/ChangePasswordModal";
 import { NotificationDropdown } from "./components/shared/NotificationDropdown";
 import { ProfilePage } from "./components/shared/ProfilePage";
 import { RoleAwarePlanner } from "./components/shared/RoleAwarePlanner";
+
+const unwrapList = <T,>(value: unknown, key: string): T[] => {
+  if (Array.isArray(value)) return value as T[];
+  if (!value || typeof value !== "object") return [];
+
+  const record = value as Record<string, unknown>;
+  if (Array.isArray(record[key])) return record[key] as T[];
+
+  const data = record.data;
+  if (Array.isArray(data)) return data as T[];
+  if (data && typeof data === "object") {
+    const nestedList = (data as Record<string, unknown>)[key];
+    if (Array.isArray(nestedList)) return nestedList as T[];
+  }
+
+  return [];
+};
 
 // Navigation configurations for each role
 const ADMIN_NAV = [
@@ -134,8 +140,6 @@ function MainWorkspace() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [showMoreNav, setShowMoreNav] = useState(false);
-  const [notifications, setNotifications] = useState<NotificationItem[]>([]);
-  const [plannerEvents, setPlannerEvents] = useState<PlannerEvent[]>([]);
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
   const [showCreateProject, setShowCreateProject] = useState(false);
   const [showCreateTask, setShowCreateTask] = useState(false);
@@ -148,25 +152,32 @@ function MainWorkspace() {
   const [loginError, setLoginError] = useState("");
   const [loggingIn, setLoggingIn] = useState(false);
 
-  // Synchronize all live data (projects, AI tasks, developer assignments) from backend
+  // Load live data from the backend. Each request is independent, so one failing
+  // endpoint no longer blanks out everything else. Users come from AuthContext.
   const fetchAllData = async () => {
     if (!token) return;
-    try {
-      const [projectsRes, tasksRes, usersRes, notificationsRes, plannerRes] = await Promise.all([
-        fetchAllProjects(),
-        fetchAllTasks(),
-        fetchAllUsers(),
-        fetchUserNotifications(),
-        fetchPlannerEventsList(),
-      ]);
 
-      setProjects(projectsRes.data || projectsRes);
-      setTasks(tasksRes.data || tasksRes);
-      setAllUsers(usersRes.data || usersRes);
-      setNotifications(notificationsRes.data || notificationsRes);
-      setPlannerEvents(plannerRes.data || plannerRes);
+    const [projectsRes, tasksRes] = await Promise.allSettled([
+      fetchAllProjects(),
+      fetchAllTasks(),
+    ]);
+
+    if (projectsRes.status === "fulfilled") {
+      setProjects(unwrapList<Project>(projectsRes.value, "projects"));
+    } else {
+      console.error("Failed to load projects:", projectsRes.reason);
+    }
+
+    if (tasksRes.status === "fulfilled") {
+      setTasks(unwrapList<Task>(tasksRes.value, "tasks"));
+    } else {
+      console.error("Failed to load tasks:", tasksRes.reason);
+    }
+
+    try {
+      await refreshUsers();
     } catch (err) {
-      console.error("fetchAllData error:", err);
+      console.error("Failed to load users:", err);
     }
   };
 
@@ -234,23 +245,19 @@ function MainWorkspace() {
     }
   };
 
-  // Tab navigation functions for PM
+  // Optimistic update; rolls back if the backend rejects the change.
   const handleUpdateTask = (updated: Task) => {
+    const previous = tasks.find((t) => t.id === updated.id);
     setTasks((prev) => prev.map((t) => (t.id === updated.id ? updated : t)));
-    API.patch(`/tasks/${updated.id}/status`, { status: updated.status }).catch(() => undefined);
+    if (previous && previous.status === updated.status) return;
+
+    changeTaskStatus(updated.id, updated.status).catch((err) => {
+      console.error("Failed to update task status:", err);
+      if (previous) {
+        setTasks((prev) => prev.map((t) => (t.id === previous.id ? previous : t)));
+      }
+    });
   };
-
-  const handleDeleteTask = (taskId: number) => {
-    setTasks((prev) => prev.filter((t) => t.id !== taskId));
-  };
-
-  // Tab navigation functions for PM and ADMIN
-  const handleRefreshProjects = () => {
-    fetchAllData();
-  };
-
-  // If unauthenticated: render dark login screen with organization admin notice
-
 
   // If unauthenticated: render dark login screen with organization admin notice
   if (!token) {

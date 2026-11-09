@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   Clock,
   Download,
@@ -8,13 +8,38 @@ import {
   ShieldAlert,
   User,
 } from "lucide-react";
-import { getStoredAuditLogs } from "../../services/mockDataStore";
+import API from "../../services/api";
 import { AuditLogItem } from "../../types";
 
 export const AuditLogs: React.FC = () => {
-  const [logs] = useState<AuditLogItem[]>(getStoredAuditLogs);
+  const [logs, setLogs] = useState<AuditLogItem[]>([]);
+  const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [actionFilter, setActionFilter] = useState("ALL");
+
+  useEffect(() => {
+    API.get("/admin/audit")
+      .then((res) => {
+        const raw = res.data?.logs ?? res.data ?? [];
+        const mapped: AuditLogItem[] = Array.isArray(raw)
+          ? raw.map((l: any) => ({
+              id: l.id,
+              timestamp: l.createdAt || l.timestamp,
+              actorId: l.actorId,
+              actorName: l.actorName || l.actor?.name || "System",
+              actorRole: l.actorRole || l.actor?.role || "",
+              action: l.action || "",
+              entityType: l.entityType || "",
+              entityId: l.entityId || "",
+              details: l.details || "",
+              ipAddress: l.ipAddress || "",
+            }))
+          : [];
+        setLogs(mapped);
+      })
+      .catch((err) => console.error("Failed to load audit logs:", err))
+      .finally(() => setLoading(false));
+  }, []);
 
   const filtered = logs.filter((item) => {
     const textMatch = `${item.actorName} ${item.action} ${item.details} ${item.entityType}`
@@ -102,7 +127,14 @@ export const AuditLogs: React.FC = () => {
               </tr>
             </thead>
             <tbody className="divide-y divide-[#222] text-xs">
-              {filtered.map((item) => (
+              {loading && logs.length === 0 ? (
+                <tr>
+                  <td colSpan={5} className="py-12 text-center text-xs text-[#666]">
+                    Loading audit logs...
+                  </td>
+                </tr>
+              ) : (
+                filtered.map((item) => (
                 <tr key={item.id} className="hover:bg-[#181818] transition">
                   <td className="py-3.5 px-5 text-[#888] font-mono text-[11px] whitespace-nowrap">
                     {new Date(item.timestamp).toLocaleString([], {
@@ -131,7 +163,8 @@ export const AuditLogs: React.FC = () => {
                     {item.details}
                   </td>
                 </tr>
-              ))}
+                ))
+              )}
             </tbody>
           </table>
         </div>
