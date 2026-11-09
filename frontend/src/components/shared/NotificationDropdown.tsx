@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { AlertCircle, AlertTriangle, Bell, Check, CheckCheck, Clock, ShieldAlert } from "lucide-react";
 import { useAuth } from "../../context/AuthContext";
+import { useSocket } from "../../context/SocketContext";
 import { NotificationItem } from "../../types";
 import API from "../../services/api";
 
@@ -10,6 +11,7 @@ interface NotificationDropdownProps {
 
 export const NotificationDropdown: React.FC<NotificationDropdownProps> = ({ onSelectTask }) => {
   const { user } = useAuth();
+  const { socket } = useSocket();
   const [open, setOpen] = useState(false);
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
 
@@ -42,6 +44,16 @@ export const NotificationDropdown: React.FC<NotificationDropdownProps> = ({ onSe
     const interval = setInterval(fetchLiveNotifications, 30000);
     return () => clearInterval(interval);
   }, [user?.id]);
+
+  // Real-time notifications pushed over the socket connection.
+  useEffect(() => {
+    if (!socket) return;
+    const handler = (n: any) => {
+      setNotifications(prev => [n, ...prev]);
+    };
+    socket.on("notification:new", handler);
+    return () => { socket.off("notification:new", handler); };
+  }, [socket]);
 
   const unreadCount = notifications.filter((n) => !n.readAt).length;
 

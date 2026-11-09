@@ -5,6 +5,7 @@ import { AppDataSource } from "../config/data-source";
 import { Notification, NotificationChannel, NotificationStatus } from "../entities/Notification";
 import { User, UserRole, UserStatus } from "../entities/User";
 import { getTelegramBotInstance } from "./telegramBot";
+import { emitToUser } from "./SocketService";
 
 export type NotifyKind =
   | "TASK_ASSIGNED"
@@ -67,7 +68,7 @@ export class NotificationService {
     recipientContact: string,
     message: string,
     kind: NotifyKind = "GENERAL"
-  ): Promise<void> {
+  ): Promise<Notification> {
     const notifRepo = AppDataSource.getRepository(Notification);
     const notification = notifRepo.create({
       userId,
@@ -80,6 +81,7 @@ export class NotificationService {
     });
     await notifRepo.save(notification);
     await this.dispatchWithRetry(notification, recipientContact);
+    return notification;
   }
 
   /** In-app always. Telegram/email if the user opted in. SMS is never sent. */
@@ -89,7 +91,15 @@ export class NotificationService {
     // 1. In-app notification
     if (user.notifyInApp !== false) {
       try {
-        await this.send(user.id, NotificationChannel.IN_APP, "", message, kind);
+        const notification = await this.send(user.id, NotificationChannel.IN_APP, "", message, kind);
+        emitToUser(user.id, "notification:new", {
+          id: notification.id,
+          userId: notification.userId,
+          message: notification.message,
+          kind: notification.kind,
+          createdAt: notification.createdAt,
+          read: !!notification.readAt,
+        });
       } catch (err: any) {
         console.error("In-app notify failed:", err?.message || err);
       }

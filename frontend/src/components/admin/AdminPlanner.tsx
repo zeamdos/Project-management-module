@@ -51,7 +51,7 @@ export const AdminPlanner: React.FC<AdminPlannerProps> = ({ projects }) => {
   useEffect(() => {
     API.get("/planner")
       .then((res) => {
-        const raw = res.data?.events ?? res.data ?? [];
+        const raw = res.data?.events ?? res.data?.data ?? res.data ?? [];
         setEvents(Array.isArray(raw) ? raw.map(mapEvent) : []);
       })
       .catch((err) => {

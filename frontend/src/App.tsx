@@ -21,6 +21,7 @@ import {
   X,
 } from "lucide-react";
 import { AuthProvider, useAuth } from "./context/AuthContext";
+import { SocketProvider, useSocket } from "./context/SocketContext";
 import { Project, Task, TaskStatus, User } from "./types";
 import {
   changeTaskStatus,
@@ -70,8 +71,10 @@ const unwrapList = <T,>(value: unknown, key: string): T[] => {
   const data = record.data;
   if (Array.isArray(data)) return data as T[];
   if (data && typeof data === "object") {
-    const nestedList = (data as Record<string, unknown>)[key];
-    if (Array.isArray(nestedList)) return nestedList as T[];
+    const nested = data as Record<string, unknown>;
+    if (Array.isArray(nested[key])) return nested[key] as T[];
+    // Paginated shape: { data: [...], total, page, limit, totalPages }
+    if (Array.isArray(nested.data)) return nested.data as T[];
   }
 
   return [];
@@ -113,6 +116,7 @@ const DEV_NAV = [
 
 function MainWorkspace() {
   const { user, token, login, logout, allUsers, refreshUsers } = useAuth();
+  const { socket } = useSocket();
 
 
   // Role detection
@@ -186,6 +190,41 @@ function MainWorkspace() {
       fetchAllData();
     }
   }, [token]);
+
+  // Real-time task updates pushed over the socket connection. Keeps the task
+  // list in sync without requiring a manual refresh.
+  useEffect(() => {
+    if (!socket) return;
+
+    const handleCreated = (incoming: Task) => {
+      if (!incoming || typeof incoming.id === "undefined") return;
+      setTasks((prev) =>
+        prev.some((t) => t.id === incoming.id) ? prev : [incoming, ...prev]
+      );
+    };
+    const handleUpdated = (incoming: Task) => {
+      if (!incoming || typeof incoming.id === "undefined") return;
+      setTasks((prev) =>
+        prev.map((t) => (t.id === incoming.id ? { ...t, ...incoming } : t))
+      );
+    };
+    const handleAssigned = (incoming: Task) => {
+      if (!incoming || typeof incoming.id === "undefined") return;
+      setTasks((prev) =>
+        prev.map((t) => (t.id === incoming.id ? { ...t, ...incoming } : t))
+      );
+    };
+
+    socket.on("task:created", handleCreated);
+    socket.on("task:updated", handleUpdated);
+    socket.on("task:assigned", handleAssigned);
+
+    return () => {
+      socket.off("task:created", handleCreated);
+      socket.off("task:updated", handleUpdated);
+      socket.off("task:assigned", handleAssigned);
+    };
+  }, [socket]);
 
   const handleProjectCreated = (newProj: Project, newTasks?: any[]) => {
     setProjects((prev) => {
@@ -692,7 +731,9 @@ function MainWorkspace() {
 export function App() {
   return (
     <AuthProvider>
-      <MainWorkspace />
+      <SocketProvider>
+        <MainWorkspace />
+      </SocketProvider>
     </AuthProvider>
   );
 }

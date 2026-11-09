@@ -20,7 +20,7 @@ export const AuditLogs: React.FC = () => {
   useEffect(() => {
     API.get("/admin/audit")
       .then((res) => {
-        const raw = res.data?.logs ?? res.data ?? [];
+        const raw = res.data?.logs ?? res.data?.data ?? res.data ?? [];
         const mapped: AuditLogItem[] = Array.isArray(raw)
           ? raw.map((l: any) => ({
               id: l.id,

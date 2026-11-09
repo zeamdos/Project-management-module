@@ -35,6 +35,10 @@ export function unwrapList<T = any>(res: any, key?: string): T[] {
   if (Array.isArray(res)) return res as T[];
   const body = res && typeof res === "object" && "data" in res ? res.data : res;
   if (Array.isArray(body)) return body as T[];
+  // Paginated shape: { data: [...], total, page, limit, totalPages }
+  if (body && typeof body === "object" && Array.isArray((body as any).data)) {
+    return (body as any).data as T[];
+  }
   if (key && body && Array.isArray(body[key])) return body[key] as T[];
   if (body && Array.isArray(body.items)) return body.items as T[];
   return [];
@@ -55,7 +59,7 @@ export async function doRegister(email: string, password: string, name: string, 
 
 /** Tasks */
 export async function fetchAllTasks() {
-  return fetchTasks();
+  return unwrapList(await fetchTasks(), "tasks");
 }
 
 export async function createNewTask(payload: {
@@ -100,7 +104,7 @@ export async function submitTaskReview(taskId: number, comment: string) {
 
 /** Projects */
 export async function fetchAllProjects() {
-  return fetchProjects();
+  return unwrapList(await fetchProjects(), "projects");
 }
 
 export async function createNewProject(payload: {
@@ -149,7 +153,7 @@ export async function fetchOneProject(projectId: number) {
 
 /** Users (admin) */
 export async function fetchAllUsers() {
-  return fetchUsers();
+  return unwrapList(await fetchUsers(), "users");
 }
 
 export async function createNewUser(payload: {
@@ -203,7 +207,7 @@ export async function markThisNotificationRead(notificationId: number) {
 
 /** Planner events */
 export async function fetchPlannerEventsList() {
-  return fetchPlannerEvents();
+  return unwrapList<PlannerEvent>(await fetchPlannerEvents(), "events");
 }
 
 export async function addPlannerEventToStore(event: Omit<PlannerEvent, "id">) {
@@ -212,5 +216,5 @@ export async function addPlannerEventToStore(event: Omit<PlannerEvent, "id">) {
 
 /** Audit logs */
 export async function fetchAuditLogHistory() {
-  return fetchAuditLogs();
+  return unwrapList(await fetchAuditLogs(), "logs");
 }

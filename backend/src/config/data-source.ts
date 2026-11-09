@@ -29,7 +29,7 @@ export const AppDataSource = new DataSource({
   password: process.env.DB_PASSWORD || "",
   database: process.env.DB_DATABASE || process.env.DB_NAME || "project_management",
 
-  synchronize: true, // Set to true temporarily if you want TypeORM to auto-create tables on startup during development
+  synchronize: false, // Schema is managed by migrations in src/migrations
   logging: !isProduction,
   entities: [path.join(__dirname, "../entities/**/*.{ts,js}")],
   migrations: [path.join(__dirname, "../migrations/**/*.{ts,js}")],

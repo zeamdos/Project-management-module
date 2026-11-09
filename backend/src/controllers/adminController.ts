@@ -66,11 +66,23 @@ export class AdminController {
   // GET /api/admin/users  — full org roster
   static async listUsers(req: AuthRequest, res: Response): Promise<void> {
     try {
-      const users = await AppDataSource.getRepository(User).find({
+      const page = Math.max(1, parseInt((req.query.page as string) || "1", 10) || 1);
+      const limit = Math.min(100, Math.max(1, parseInt((req.query.limit as string) || "20", 10) || 20));
+      const skip = (page - 1) * limit;
+
+      const [users, total] = await AppDataSource.getRepository(User).findAndCount({
         where: { orgId: req.user!.orgId },
         order: { id: "ASC" },
+        skip,
+        take: limit,
       });
-      res.json({ users: users.map(sanitizeUser) });
+      res.json({
+        data: users.map(sanitizeUser),
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit),
+      });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }

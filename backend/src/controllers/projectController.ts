@@ -184,8 +184,8 @@ export class ProjectController {
   static async list(req: AuthRequest, res: Response): Promise<void> {
     try {
       const orgId = req.user!.orgId;
-      const page = parseInt((req.query.page as string) || "1", 10);
-      const limit = parseInt((req.query.limit as string) || "10", 10);
+      const page = Math.max(1, parseInt((req.query.page as string) || "1", 10) || 1);
+      const limit = Math.min(100, Math.max(1, parseInt((req.query.limit as string) || "20", 10) || 20));
       const skip = (page - 1) * limit;
 
       const projectRepo = AppDataSource.getRepository(Project);
@@ -199,7 +199,10 @@ export class ProjectController {
 
       res.json({
         data: projects.map(withSafeAssignees),
-        pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit),
       });
     } catch (error: any) {
       console.error("Project list error:", error);

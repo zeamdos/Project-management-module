@@ -10,10 +10,11 @@ import { Policy } from "../entities/Policy";
 import { Review, ReviewStatus } from "../entities/Review";
 import { AuditService } from "../services/AuditService";
 import { NotificationService } from "../services/NotificationService";
+import { emitToUser } from "../services/SocketService";
 
 // Maps a Task entity row into the shape the frontend Task type expects,
 // including the related project name and assignee summary.
-function shapeTask(t: Task) {
+export function shapeTask(t: Task) {
   return {
     id: t.id,
     projectId: t.projectId,
@@ -185,6 +186,10 @@ export class TaskController {
       relations: ["project", "assignee", "team"],
     });
 
+    if (saved && saved.assigneeId) {
+      emitToUser(saved.assigneeId, "task:created", shapeTask(saved));
+    }
+
     res.status(201).json(saved ? shapeTask(saved) : { id: task.id });
   }
 
@@ -298,6 +303,10 @@ export class TaskController {
 
       await taskRepo.save(task);
       await AuditService.log(orgId, req.user!.id, "UPDATE", "Task", task.id, `Updated task ${task.title}`);
+
+      if (task.assigneeId) {
+        emitToUser(task.assigneeId, "task:updated", shapeTask(task));
+      }
 
       res.json(shapeTask(task));
     } catch (err: any) {

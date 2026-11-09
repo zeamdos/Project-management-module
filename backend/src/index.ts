@@ -38,10 +38,27 @@ import { AdminController } from "./controllers/adminController";
 import { PlannerController } from "./controllers/plannerController";
 import { AuditController } from "./controllers/auditController";
 import { authenticate, requireRole } from "./middleware/auth";
+import { validateBody } from "./middleware/validate";
+import {
+  loginSchema,
+  registerSchema,
+  createUserSchema,
+  updateUserSchema,
+  createTaskSchema,
+  updateTaskSchema,
+  assignTaskSchema,
+  createProjectSchema,
+  updateProjectSchema,
+  submitReviewSchema,
+  createPlannerEventSchema,
+  changePasswordSchema,
+  updateProfileSchema,
+} from "./schemas";
 import { User, UserRole, UserStatus } from "./entities/User";
 import { Organization } from "./entities/Organization";
 import { startTelegramBot } from "./services/telegramBot";
 import { startProgressScheduler } from "./services/progressService";
+import { initSocket } from "./services/SocketService";
 
 if (!process.env.JWT_SECRET && process.env.NODE_ENV === "production") {
   throw new Error("FATAL: JWT_SECRET must be defined in production.");
@@ -76,8 +93,8 @@ const authLimiter = rateLimit({
 });
 
 // Auth Routes
-app.post("/api/auth/register", authLimiter, AuthController.register);
-app.post("/api/auth/login", authLimiter, AuthController.login);
+app.post("/api/auth/register", authLimiter, validateBody(registerSchema), AuthController.register);
+app.post("/api/auth/login", authLimiter, validateBody(loginSchema), AuthController.login);
 
 // Webhook Route (No JWT auth, signature verified)
 app.post("/api/webhooks/github", WebhookController.handleGitHub);
@@ -98,8 +115,8 @@ app.get("/api/insights", authenticate, DashboardController.insights);
 
 // Admin-only User Management (Closed Provisioning — no public signup)
 app.get("/api/admin/users", authenticate, requireRole(UserRole.ADMIN), AdminController.listUsers);
-app.post("/api/admin/users", authenticate, requireRole(UserRole.ADMIN), AdminController.createUser);
-app.patch("/api/admin/users/:id", authenticate, requireRole(UserRole.ADMIN), AdminController.updateUser);
+app.post("/api/admin/users", authenticate, requireRole(UserRole.ADMIN), validateBody(createUserSchema), AdminController.createUser);
+app.patch("/api/admin/users/:id", authenticate, requireRole(UserRole.ADMIN), validateBody(updateUserSchema), AdminController.updateUser);
 app.post("/api/admin/users/:id/reset-password", authenticate, requireRole(UserRole.ADMIN), AdminController.resetPassword);
 app.delete("/api/admin/users/:id", authenticate, requireRole(UserRole.ADMIN), AdminController.deactivateUser);
 
@@ -111,9 +128,9 @@ app.put("/api/projects/:id", authenticate, requireRole(UserRole.ADMIN, UserRole.
 app.delete("/api/projects/:id", authenticate, requireRole(UserRole.ADMIN, UserRole.MANAGER), ProjectController.delete);
 
 // Task Routes
-app.post("/api/tasks", authenticate, requireRole(UserRole.ADMIN, UserRole.MANAGER, UserRole.TEAM_LEAD), TaskController.create);
+app.post("/api/tasks", authenticate, requireRole(UserRole.ADMIN, UserRole.MANAGER, UserRole.TEAM_LEAD), validateBody(createTaskSchema), TaskController.create);
 app.get("/api/tasks", authenticate, TaskController.list);
-app.patch("/api/tasks/:id", authenticate, TaskController.update);
+app.patch("/api/tasks/:id", authenticate, validateBody(updateTaskSchema), TaskController.update);
 app.patch("/api/tasks/:id/status", authenticate, TaskController.updateStatus);
 
 // Review and reassignment (the controller checks who may review which task)
@@ -136,7 +153,7 @@ app.get("/api/projects/:projectId/health", authenticate, DashboardController.get
 
 // Planner Routes
 app.get("/api/planner", authenticate, PlannerController.getEvents);
-app.post("/api/planner", authenticate, PlannerController.addEvent);
+app.post("/api/planner", authenticate, validateBody(createPlannerEventSchema), PlannerController.addEvent);
 
 // Audit Routes
 app.get("/api/admin/audit", authenticate, requireRole(UserRole.ADMIN), AuditController.getAuditLogs);
@@ -295,9 +312,11 @@ AppDataSource.initialize()
     startTelegramBot().catch((err) => console.error("Telegram bot failed to start:", err));
     startProgressScheduler();
 
-    app.listen(PORT, () => {
+    const server = app.listen(PORT, () => {
       console.log(`Server running on port ${PORT}`);
     });
+
+    initSocket(server);
   })
   .catch((err) => {
     console.error("Error during Data Source initialization:", err);

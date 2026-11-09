@@ -8,6 +8,8 @@ import { Review, ReviewStatus } from "../entities/Review";
 import { GitActivity } from "../entities/GitActivity";
 import { NotificationService } from "../services/NotificationService";
 import { AuditService } from "../services/AuditService";
+import { emitToUser } from "../services/SocketService";
+import { shapeTask } from "./taskController";
 
 // PM, admin and team leads can review everything in their organization.
 const LEAD_ROLES: UserRole[] = [UserRole.ADMIN, UserRole.MANAGER, UserRole.TEAM_LEAD];
@@ -261,6 +263,7 @@ export class WorkflowController {
       await taskRepo.save(task);
 
       const by = await userRepo.findOne({ where: { id: me.id } });
+      emitToUser(dev.id, "task:assigned", { task: shapeTask(task), previousAssigneeId: previous?.id });
       await tellUser(dev, `A task was assigned to you: "${task.title}" (TASK-${task.id}), by ${by?.name ?? "your PM"}. Open your dashboard for the plan.`, "TASK_ASSIGNED");
       await tellUser(previous, `Your task "${task.title}" (TASK-${task.id}) was moved to ${dev.name}.`);
 

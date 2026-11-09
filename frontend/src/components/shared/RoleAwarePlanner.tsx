@@ -39,7 +39,7 @@ export const RoleAwarePlanner: React.FC<RoleAwarePlannerProps> = ({
   useEffect(() => {
     API.get("/planner")
       .then((res) => {
-        const raw = res.data?.events ?? res.data ?? [];
+        const raw = res.data?.events ?? res.data?.data ?? res.data ?? [];
         const events: PlannerEvent[] = Array.isArray(raw)
           ? raw.map((e: any) => ({
               id: String(e.id),

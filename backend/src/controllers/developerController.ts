@@ -322,20 +322,28 @@ export class DeveloperController {
 
   static async notifications(req: AuthRequest, res: Response): Promise<void> {
     try {
-      const rows = await AppDataSource.getRepository(Notification).find({
+      const page = Math.max(1, parseInt((req.query.page as string) || "1", 10) || 1);
+      const limit = Math.min(100, Math.max(1, parseInt((req.query.limit as string) || "20", 10) || 20));
+      const skip = (page - 1) * limit;
+
+      const [rows, total] = await AppDataSource.getRepository(Notification).findAndCount({
         where: { userId: req.user!.id, channel: NotificationChannel.IN_APP },
         order: { id: "DESC" },
-        take: 50,
+        skip,
+        take: limit,
       });
       res.json({
-        unread: rows.filter((n) => !n.readAt).length,
-        notifications: rows.map((n) => ({
+        data: rows.map((n) => ({
           id: n.id,
           kind: n.kind,
           message: n.message,
           readAt: n.readAt,
           createdAt: n.createdAt,
         })),
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit),
       });
     } catch (error: any) {
       console.error("notifications error:", error);
